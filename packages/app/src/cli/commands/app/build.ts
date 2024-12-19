@@ -6,6 +6,7 @@ import {linkedAppContext} from '../../services/app-context.js'
 import {Flags} from '@oclif/core'
 import {globalFlags} from '@shopify/cli-kit/node/cli'
 import {addPublicMetadata} from '@shopify/cli-kit/node/metadata'
+import { ensureXpifyDev } from '@xpify/buildpack'
 
 export default class Build extends AppCommand {
   static summary = 'Build the app, including extensions.'
@@ -44,13 +45,14 @@ export default class Build extends AppCommand {
       cmd_app_dependency_installation_skipped: flags['skip-dependencies-installation'],
     }))
 
-    const {app} = await linkedAppContext({
+    const {app, remoteApp} = await linkedAppContext({
       directory: flags.path,
       clientId: apiKey,
       forceRelink: flags.reset,
       userProvidedConfigName: flags.config,
     })
 
+    await ensureXpifyDev({ localApp: app, remoteApp })
     await build({app, skipDependenciesInstallation: flags['skip-dependencies-installation'], apiKey})
 
     return {app}

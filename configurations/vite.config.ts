@@ -3,7 +3,7 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import * as path from 'pathe'
-import {defineConfig} from 'vitest/config'
+import {defineConfig, splitVendorChunkPlugin} from 'vitest/config'
 
 const TIMEOUTS = {
   normal: 5000,
@@ -30,6 +30,7 @@ export default function config(packagePath: string) {
     resolve: {
       alias: aliases(packagePath),
     },
+    plugins: [splitVendorChunkPlugin()],
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
     test: {
