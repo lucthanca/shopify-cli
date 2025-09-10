@@ -6,6 +6,7 @@ import AppUnlinkedCommand, {AppUnlinkedCommandOutput} from '../../utilities/app-
 import {Flags} from '@oclif/core'
 import {globalFlags} from '@shopify/cli-kit/node/cli'
 import {addPublicMetadata} from '@shopify/cli-kit/node/metadata'
+import {appFromIdentifiers} from '../../services/context.js'
 import {ensureXpifyDev} from '@xpify/buildpack'
 
 export default class Build extends AppUnlinkedCommand {
@@ -49,6 +50,13 @@ export default class Build extends AppUnlinkedCommand {
       directory: flags.path,
       userProvidedConfigName: flags.config,
     })
+    if (app.dotenv?.variables['SHOPIFY_API_KEY']) {
+      const remoteApp = await appFromIdentifiers({apiKey: app.dotenv.variables['SHOPIFY_API_KEY']})
+      await ensureXpifyDev({localApp: app, remoteApp})
+      if (!process.env.SHOPIFY_API_KEY) {
+        process.env.SHOPIFY_API_KEY = app.dotenv.variables['SHOPIFY_API_KEY'];
+      }
+    }
 
     await build({app, skipDependenciesInstallation: flags['skip-dependencies-installation'], apiKey})
 
