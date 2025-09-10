@@ -5,7 +5,7 @@ import {WebProcess, launchWebProcess} from './web.js'
 import {PreviewableExtensionProcess, launchPreviewableExtensionProcess} from './previewable-extension.js'
 import {launchGraphiQLServer} from './graphiql.js'
 import {pushUpdatesForDraftableExtensions} from './draftable-extension.js'
-import {pushUpdatesForDevSession} from './dev-session.js'
+import {pushUpdatesForDevSession} from './dev-session/dev-session-process.js'
 import {runThemeAppExtensionsServer} from './theme-app-extension.js'
 import {launchAppWatcher} from './app-watcher-process.js'
 import {
@@ -94,13 +94,18 @@ describe('setup-dev-processes', () => {
       update: false,
       commandConfig: new Config({root: ''}),
       skipDependenciesInstallation: false,
-      noTunnel: false,
+      tunnel: {mode: 'auto'},
     }
     const network: DevConfig['network'] = {
       proxyUrl: 'https://example.com/proxy',
       proxyPort: 444,
       backendPort: 111,
       frontendPort: 222,
+      reverseProxyCert: {
+        cert: 'cert',
+        key: 'key',
+        certPath: 'localhost.pem',
+      },
       currentUrls: {
         applicationUrl: 'https://example.com/application',
         redirectUrlWhitelist: ['https://example.com/redirect'],
@@ -138,6 +143,7 @@ describe('setup-dev-processes', () => {
       organizationId: '5678',
       grantedScopes: [],
       flags: [],
+      developerPlatformClient,
     }
 
     const graphiqlKey = 'somekey'
@@ -256,9 +262,10 @@ describe('setup-dev-processes', () => {
       },
     })
 
-    expect(res.processes[6]).toMatchObject({
+    const appWatcherProcess = res.processes.find((process) => process.type === 'app-watcher')
+    expect(appWatcherProcess).toMatchObject({
       type: 'app-watcher',
-      prefix: 'dev-session',
+      prefix: 'app-preview',
       function: launchAppWatcher,
       options: {
         appWatcher: expect.any(AppEventWatcher),
@@ -270,12 +277,17 @@ describe('setup-dev-processes', () => {
     const hmrPort = (res.processes[0] as WebProcess).options.hmrServerOptions?.port
     const previewExtensionPort = (res.processes[2] as PreviewableExtensionProcess).options.port
 
-    expect(res.processes[7]).toMatchObject({
+    const proxyServerProcess = res.processes.find((process) => process.type === 'proxy-server')
+    expect(proxyServerProcess).toMatchObject({
       type: 'proxy-server',
       prefix: 'proxy',
       function: startProxyServer,
       options: {
         port: 444,
+        localhostCert: {
+          cert: 'cert',
+          key: 'key',
+        },
         rules: {
           '/extensions': `http://localhost:${previewExtensionPort}`,
           '/ping': `http://localhost:${hmrPort}`,
@@ -298,7 +310,7 @@ describe('setup-dev-processes', () => {
       update: false,
       commandConfig: new Config({root: ''}),
       skipDependenciesInstallation: false,
-      noTunnel: false,
+      tunnel: {mode: 'auto'},
     }
     const network: DevConfig['network'] = {
       proxyUrl: 'https://example.com/proxy',
@@ -321,6 +333,7 @@ describe('setup-dev-processes', () => {
       organizationId: '5678',
       grantedScopes: [],
       flags: [],
+      developerPlatformClient,
     }
 
     const res = await setupDevProcesses({
@@ -337,9 +350,9 @@ describe('setup-dev-processes', () => {
       graphiqlKey: 'somekey',
     })
 
-    expect(res.processes[2]).toMatchObject({
+    expect(res.processes[3]).toMatchObject({
       type: 'dev-session',
-      prefix: 'dev-session',
+      prefix: 'app-preview',
       function: pushUpdatesForDevSession,
       options: {
         app: localApp,
@@ -370,7 +383,7 @@ describe('setup-dev-processes', () => {
       update: false,
       commandConfig: new Config({root: ''}),
       skipDependenciesInstallation: false,
-      noTunnel: false,
+      tunnel: {mode: 'auto'},
     }
     const network: DevConfig['network'] = {
       proxyUrl: 'https://example.com/proxy',
@@ -415,6 +428,7 @@ describe('setup-dev-processes', () => {
       organizationId: '5678',
       grantedScopes: [],
       flags: [],
+      developerPlatformClient,
     }
 
     const graphiqlKey = 'somekey'
@@ -440,10 +454,10 @@ describe('setup-dev-processes', () => {
       options: {
         developerPlatformClient,
         appLogsSubscribeVariables: {
-          shopIds: ['123456789'],
+          shopIds: [123456789],
           apiKey: 'api-key',
-          token: 'token',
         },
+        appWatcher: expect.any(AppEventWatcher),
       },
     })
   })
@@ -465,7 +479,7 @@ describe('setup-dev-processes', () => {
       update: false,
       commandConfig: new Config({root: ''}),
       skipDependenciesInstallation: false,
-      noTunnel: false,
+      tunnel: {mode: 'auto'},
     }
     const network: DevConfig['network'] = {
       proxyUrl: 'https://example.com/proxy',
@@ -511,6 +525,7 @@ describe('setup-dev-processes', () => {
       organizationId: '5678',
       grantedScopes: [],
       flags: [],
+      developerPlatformClient,
     }
 
     const graphiqlKey = 'somekey'
@@ -529,9 +544,10 @@ describe('setup-dev-processes', () => {
       graphiqlKey,
     })
 
-    res.processes.forEach((process) => {
-      expect(process.type).not.toBe('app-logs-subscribe')
-    })
+    const logsProcess = res.processes.find((process) => process.type === 'app-logs-subscribe')
+    expect(logsProcess).not.toBeUndefined()
+    expect(logsProcess?.options).toHaveProperty('localApp')
+    expect(logsProcess?.options).toHaveProperty('appWatcher')
   })
 
   test('pushUpdatesForDraftableExtensions does not include config extensions except app_access', async () => {
@@ -549,7 +565,7 @@ describe('setup-dev-processes', () => {
       update: false,
       commandConfig: new Config({root: ''}),
       skipDependenciesInstallation: false,
-      noTunnel: false,
+      tunnel: {mode: 'auto'},
     }
     const network: DevConfig['network'] = {
       proxyUrl: 'https://example.com/proxy',
@@ -605,6 +621,7 @@ describe('setup-dev-processes', () => {
       organizationId: '5678',
       grantedScopes: [],
       flags: [],
+      developerPlatformClient,
     }
 
     const graphiqlKey = 'somekey'

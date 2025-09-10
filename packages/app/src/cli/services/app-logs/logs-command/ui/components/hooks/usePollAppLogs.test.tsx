@@ -15,6 +15,7 @@ import {
   NetworkAccessRequestExecutionInBackgroundLog,
   NetworkAccessResponseFromCacheLog,
 } from '../../../../types.js'
+import {testDeveloperPlatformClient} from '../../../../../../models/app/app.test-data.js'
 import {render} from '@shopify/cli-kit/node/testing/ui'
 import {test, describe, vi, beforeEach, afterEach, expect} from 'vitest'
 import React from 'react'
@@ -165,6 +166,9 @@ const POLL_APP_LOGS_FOR_LOGS_RESPONSE = {
   ],
 }
 
+const MOCKED_ORGANIZATION_ID = '123'
+const MOCKED_APP_ID = '456'
+
 const POLL_APP_LOGS_FOR_LOGS_401_RESPONSE = {
   errors: [{status: 401, message: 'Unauthorized'}],
 }
@@ -196,6 +200,8 @@ describe('usePollAppLogs', () => {
     const mockedPollAppLogs = vi.fn().mockResolvedValue(POLL_APP_LOGS_FOR_LOGS_RESPONSE)
     vi.mocked(pollAppLogs).mockImplementation(mockedPollAppLogs)
 
+    const mockedDeveloperPlatformClient = testDeveloperPlatformClient()
+
     const resubscribeCallback = vi.fn().mockResolvedValue(NEW_JWT_TOKEN)
 
     const hook = renderHook(() =>
@@ -204,11 +210,16 @@ describe('usePollAppLogs', () => {
         filters: EMPTY_FILTERS,
         resubscribeCallback,
         storeNameById: STORE_NAME_BY_ID,
+        developerPlatformClient: mockedDeveloperPlatformClient,
+        organizationId: MOCKED_ORGANIZATION_ID,
       }),
     )
 
     // needed to await the render
     await vi.advanceTimersByTimeAsync(0)
+
+    // Wait for the async polling function to execute
+    await waitForMockCalls(mockedPollAppLogs, 1)
 
     expect(mockedPollAppLogs).toHaveBeenCalledTimes(1)
 
@@ -316,6 +327,7 @@ describe('usePollAppLogs', () => {
     vi.mocked(pollAppLogs).mockImplementation(mockedPollAppLogs)
 
     const resubscribeCallback = vi.fn().mockResolvedValue(NEW_JWT_TOKEN)
+    const mockedDeveloperPlatformClient = testDeveloperPlatformClient()
 
     renderHook(() =>
       usePollAppLogs({
@@ -323,23 +335,40 @@ describe('usePollAppLogs', () => {
         filters: EMPTY_FILTERS,
         resubscribeCallback,
         storeNameById: STORE_NAME_BY_ID,
+        developerPlatformClient: mockedDeveloperPlatformClient,
+        organizationId: MOCKED_ORGANIZATION_ID,
       }),
     )
 
     // needed to await the render
     await vi.advanceTimersByTimeAsync(0)
 
+    // Wait for the async polling function to execute
+    await waitForMockCalls(mockedPollAppLogs, 1)
+
     // Initial invocation, 401 returned
     expect(mockedPollAppLogs).toHaveBeenNthCalledWith(1, {
-      jwtToken: MOCKED_JWT_TOKEN,
-      cursor: '',
-      filters: EMPTY_FILTERS,
+      pollOptions: {
+        jwtToken: MOCKED_JWT_TOKEN,
+        cursor: '',
+        filters: EMPTY_FILTERS,
+      },
+      developerPlatformClient: mockedDeveloperPlatformClient,
+      organizationId: MOCKED_ORGANIZATION_ID,
     })
     expect(resubscribeCallback).toHaveBeenCalledOnce()
 
     // Follow up invocation, which invokes resubscribeCallback
     await vi.advanceTimersToNextTimerAsync()
-    expect(mockedPollAppLogs).toHaveBeenNthCalledWith(2, {jwtToken: NEW_JWT_TOKEN, cursor: '', filters: EMPTY_FILTERS})
+
+    // Wait for the second async polling function call to execute
+    await waitForMockCalls(mockedPollAppLogs, 2)
+
+    expect(mockedPollAppLogs).toHaveBeenNthCalledWith(2, {
+      pollOptions: {jwtToken: NEW_JWT_TOKEN, cursor: '', filters: EMPTY_FILTERS},
+      developerPlatformClient: mockedDeveloperPlatformClient,
+      organizationId: MOCKED_ORGANIZATION_ID,
+    })
 
     expect(vi.getTimerCount()).toEqual(1)
   })
@@ -351,6 +380,8 @@ describe('usePollAppLogs', () => {
       .mockResolvedValueOnce(POLL_APP_LOGS_FOR_LOGS_RESPONSE)
     vi.mocked(pollAppLogs).mockImplementation(mockedPollAppLogs)
 
+    const mockedDeveloperPlatformClient = testDeveloperPlatformClient()
+
     const timeoutSpy = vi.spyOn(global, 'setTimeout')
 
     const resubscribeCallback = vi.fn().mockResolvedValue(NEW_JWT_TOKEN)
@@ -361,6 +392,8 @@ describe('usePollAppLogs', () => {
         filters: EMPTY_FILTERS,
         resubscribeCallback,
         storeNameById: STORE_NAME_BY_ID,
+        developerPlatformClient: mockedDeveloperPlatformClient,
+        organizationId: MOCKED_ORGANIZATION_ID,
       }),
     )
 
@@ -390,6 +423,8 @@ describe('usePollAppLogs', () => {
       .mockResolvedValueOnce(POLL_APP_LOGS_FOR_LOGS_RESPONSE)
     vi.mocked(pollAppLogs).mockImplementation(mockedPollAppLogs)
 
+    const mockedDeveloperPlatformClient = testDeveloperPlatformClient()
+
     const timeoutSpy = vi.spyOn(global, 'setTimeout')
 
     const resubscribeCallback = vi.fn().mockResolvedValue(NEW_JWT_TOKEN)
@@ -400,6 +435,8 @@ describe('usePollAppLogs', () => {
         filters: EMPTY_FILTERS,
         resubscribeCallback,
         storeNameById: STORE_NAME_BY_ID,
+        developerPlatformClient: mockedDeveloperPlatformClient,
+        organizationId: MOCKED_ORGANIZATION_ID,
       }),
     )
 
@@ -431,12 +468,16 @@ describe('usePollAppLogs', () => {
       .mockResolvedValueOnce(POLL_APP_LOGS_FOR_LOGS_RESPONSE)
     vi.mocked(pollAppLogs).mockImplementation(mockedPollAppLogs)
 
+    const mockedDeveloperPlatformClient = testDeveloperPlatformClient()
+
     const hook = renderHook(() =>
       usePollAppLogs({
         initialJwt: MOCKED_JWT_TOKEN,
         filters: EMPTY_FILTERS,
         resubscribeCallback: vi.fn().mockResolvedValue(MOCKED_JWT_TOKEN),
         storeNameById: STORE_NAME_BY_ID,
+        developerPlatformClient: mockedDeveloperPlatformClient,
+        organizationId: MOCKED_ORGANIZATION_ID,
       }),
     )
 
@@ -453,6 +494,8 @@ describe('usePollAppLogs', () => {
     const mockedPollAppLogs = vi.fn().mockResolvedValue(POLL_APP_LOGS_FOR_LOGS_RESPONSE)
     vi.mocked(pollAppLogs).mockImplementation(mockedPollAppLogs)
 
+    const mockedDeveloperPlatformClient = testDeveloperPlatformClient()
+
     const resubscribeCallback = vi.fn().mockResolvedValue(NEW_JWT_TOKEN)
 
     const hook = renderHook(() =>
@@ -461,6 +504,8 @@ describe('usePollAppLogs', () => {
         filters: EMPTY_FILTERS,
         resubscribeCallback,
         storeNameById: new Map(),
+        developerPlatformClient: mockedDeveloperPlatformClient,
+        organizationId: MOCKED_ORGANIZATION_ID,
       }),
     )
 
@@ -489,4 +534,28 @@ function renderHook<THookResult>(renderHookCallback: () => THookResult) {
   render(<MockComponent />)
 
   return result
+}
+
+async function waitForMockCalls(mockFn: any, expectedCallCount: number, timeoutMs = 2000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Mock timeout: expected ${expectedCallCount} calls, got ${mockFn.mock.calls.length} after ${timeoutMs}ms`,
+          ),
+        ),
+      timeoutMs,
+    )
+
+    const check = () => {
+      if (mockFn.mock.calls.length >= expectedCallCount) {
+        clearTimeout(timeout)
+        resolve()
+      } else {
+        setImmediate(check)
+      }
+    }
+    check()
+  })
 }

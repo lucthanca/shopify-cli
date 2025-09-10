@@ -17,7 +17,6 @@ import {
   ConvertDevToTransferDisabledSchema,
   ConvertDevToTransferDisabledStoreVariables,
 } from '../api/graphql/convert_dev_to_transfer_disabled_store.js'
-import {FindStoreByDomainSchema} from '../api/graphql/find_store_by_domain.js'
 import {AppVersionsQuerySchema} from '../api/graphql/get_versions_list.js'
 import {
   DevelopmentStorePreviewUpdateInput,
@@ -35,18 +34,16 @@ import {
 } from '../api/graphql/extension_migrate_flow_extension.js'
 import {UpdateURLsSchema, UpdateURLsVariables} from '../api/graphql/update_urls.js'
 import {CurrentAccountInfoSchema} from '../api/graphql/current_account_info.js'
-import {ExtensionTemplate} from '../models/app/template.js'
+import {ExtensionTemplatesResult} from '../models/app/template.js'
 import {SchemaDefinitionByTargetQueryVariables} from '../api/graphql/functions/generated/schema-definition-by-target.js'
 import {SchemaDefinitionByApiTypeQueryVariables} from '../api/graphql/functions/generated/schema-definition-by-api-type.js'
 import {
   MigrateToUiExtensionSchema,
   MigrateToUiExtensionVariables,
 } from '../api/graphql/extension_migrate_to_ui_extension.js'
-import {AppLogsSubscribeVariables, AppLogsSubscribeResponse} from '../api/graphql/subscribe_to_app_logs.js'
 import {RemoteSpecification} from '../api/graphql/extension_specifications.js'
 import {MigrateAppModuleSchema, MigrateAppModuleVariables} from '../api/graphql/extension_migrate_app_module.js'
-import {AppConfiguration, isCurrentAppSchema} from '../models/app/app.js'
-import {loadAppConfiguration} from '../models/app/loader.js'
+import {AppManifest} from '../models/app/app.js'
 import {
   ExtensionUpdateDraftMutation,
   ExtensionUpdateDraftMutationVariables,
@@ -54,7 +51,16 @@ import {
 import {DevSessionCreateMutation} from '../api/graphql/app-dev/generated/dev-session-create.js'
 import {DevSessionUpdateMutation} from '../api/graphql/app-dev/generated/dev-session-update.js'
 import {DevSessionDeleteMutation} from '../api/graphql/app-dev/generated/dev-session-delete.js'
-import {isAppManagementEnabled} from '@shopify/cli-kit/node/context/local'
+import {AppLogsOptions} from '../services/app-logs/utils.js'
+import {AppLogData} from '../services/app-logs/types.js'
+import {
+  AppLogsSubscribeMutation,
+  AppLogsSubscribeMutationVariables,
+} from '../api/graphql/app-management/generated/app-logs-subscribe.js'
+import {TokenItem} from '@shopify/cli-kit/node/ui'
+import {blockPartnersAccess} from '@shopify/cli-kit/node/environment'
+import {UnauthorizedHandler} from '@shopify/cli-kit/node/api/graphql'
+import {JsonMapType} from '@shopify/cli-kit/node/toml'
 
 export enum ClientName {
   AppManagement = 'app-management',
@@ -66,7 +72,6 @@ export type Paginateable<T> = T & {
 }
 
 interface SelectDeveloperPlatformClientOptions {
-  configuration?: AppConfiguration | undefined
   organization?: Organization
 }
 
@@ -76,51 +81,21 @@ export interface AppVersionIdentifiers {
 }
 
 export function allDeveloperPlatformClients(): DeveloperPlatformClient[] {
-  const clients: DeveloperPlatformClient[] = [new PartnersClient()]
-  if (isAppManagementEnabled()) clients.push(new AppManagementClient())
+  const clients: DeveloperPlatformClient[] = []
+
+  clients.push(new AppManagementClient())
+
+  if (!blockPartnersAccess()) {
+    clients.push(new PartnersClient())
+  }
+
   return clients
 }
 
-/**
- * Attempts to load an app's configuration in order to select a developer platform client.
- *
- * The provided options are a subset of what is common across most services.
- *
- * @param directory - The working directory for this command (possibly via `--path`)
- * @param configName - An optional configuration file name to force, provided by the developer
- * @param developerPlatformClient - An optional developer platform client to use, forced by the developer
- */
-export async function sniffServiceOptionsAndAppConfigToSelectPlatformClient(options: {
-  directory: string
-  configName?: string
-  developerPlatformClient?: DeveloperPlatformClient
-}): Promise<DeveloperPlatformClient> {
-  if (options.developerPlatformClient) {
-    return options.developerPlatformClient
-  }
-  try {
-    const {configuration} = await loadAppConfiguration({
-      ...options,
-      userProvidedConfigName: options.configName,
-    })
-    const developerPlatformClient = selectDeveloperPlatformClient({configuration})
-    return developerPlatformClient
-    // eslint-disable-next-line no-catch-all/no-catch-all
-  } catch (error) {
-    // If the app is invalid, we really don't care at this point. This function is purely responsible for selecting
-    // a client.
-    return new PartnersClient()
-  }
-}
-
 export function selectDeveloperPlatformClient({
-  configuration,
   organization,
 }: SelectDeveloperPlatformClientOptions = {}): DeveloperPlatformClient {
-  if (isAppManagementEnabled()) {
-    if (organization) return selectDeveloperPlatformClientByOrg(organization)
-    return selectDeveloperPlatformClientByConfig(configuration)
-  }
+  if (organization) return selectDeveloperPlatformClientByOrg(organization)
   return new PartnersClient()
 }
 
@@ -129,16 +104,12 @@ function selectDeveloperPlatformClientByOrg(organization: Organization): Develop
   return new PartnersClient()
 }
 
-function selectDeveloperPlatformClientByConfig(configuration: AppConfiguration | undefined): DeveloperPlatformClient {
-  if (!configuration || (isCurrentAppSchema(configuration) && configuration.organization_id))
-    return new AppManagementClient()
-  return new PartnersClient()
-}
-
 export interface CreateAppOptions {
+  name: string
   isLaunchable?: boolean
   scopesArray?: string[]
   directory?: string
+  isEmbedded?: boolean
 }
 
 interface AppModuleVersionSpecification {
@@ -155,6 +126,7 @@ export interface AppModuleVersion {
   registrationUuid?: string
   registrationTitle: string
   config?: object
+  target?: string
   type: string
   specification?: AppModuleVersionSpecification
 }
@@ -172,16 +144,29 @@ export type AppVersionWithContext = AppVersion & {
 }
 
 export type AppDeployOptions = AppDeployVariables & {
+  appManifest: AppManifest
   appId: string
   organizationId: string
   name: string
 }
 
-export interface DevSessionOptions {
+interface DevSessionSharedOptions {
   shopFqdn: string
   appId: string
-  assetsUrl: string
 }
+
+export interface DevSessionCreateOptions extends DevSessionSharedOptions {
+  assetsUrl?: string
+  manifest: AppManifest
+}
+
+export interface DevSessionUpdateOptions extends DevSessionSharedOptions {
+  assetsUrl?: string
+  manifest: AppManifest
+  inheritedModuleUids: string[]
+}
+
+export type DevSessionDeleteOptions = DevSessionSharedOptions
 
 type WithUserErrors<T> = T & {
   userErrors: {
@@ -204,25 +189,62 @@ export function filterDisabledFlags(disabledFlags: string[] = []): Flag[] {
   return defaultActiveFlags.filter((flag) => !remoteDisabledFlags.includes(flag))
 }
 
+export interface AppLogsSuccess {
+  app_logs: AppLogData[]
+  cursor?: string
+  status: number
+}
+
+export interface AppLogsError {
+  errors: string[]
+  status: number
+}
+
+export type AppLogsResponse = AppLogsSuccess | AppLogsError
+
+export interface UserError {
+  field?: string[] | null
+  message: string
+  category: string
+  details: ErrorDetail[]
+  on?: JsonMapType
+}
+
+interface ErrorDetail {
+  extension_id?: number | string
+  extension_title?: string
+  specification_identifier?: string
+  [key: string]: unknown
+}
+
 export interface DeveloperPlatformClient {
-  readonly clientName: string
+  readonly clientName: ClientName
   readonly webUiName: string
   readonly supportsAtomicDeployments: boolean
-  readonly requiresOrganization: boolean
   readonly supportsDevSessions: boolean
+  readonly supportsStoreSearch: boolean
+  readonly organizationSource: OrganizationSource
+  readonly bundleFormat: 'zip' | 'br'
+  readonly supportsDashboardManagedExtensions: boolean
   session: () => Promise<PartnersSession>
-  refreshToken: () => Promise<string>
+  /**
+   * This is an unsafe method that should only be used when the session is expired.
+   * It is not safe to use this method in other contexts as it may lead to race conditions.
+   * Use only if you know what you are doing.
+   */
+  unsafeRefreshToken: () => Promise<string>
   accountInfo: () => Promise<PartnersSession['accountInfo']>
-  appFromId: (app: MinimalAppIdentifiers) => Promise<OrganizationApp | undefined>
+  appFromIdentifiers: (apiKey: string) => Promise<OrganizationApp | undefined>
   organizations: () => Promise<Organization[]>
   orgFromId: (orgId: string) => Promise<Organization | undefined>
   orgAndApps: (orgId: string) => Promise<Paginateable<{organization: Organization; apps: MinimalOrganizationApp[]}>>
   appsForOrg: (orgId: string, term?: string) => Promise<Paginateable<{apps: MinimalOrganizationApp[]}>>
   specifications: (app: MinimalAppIdentifiers) => Promise<RemoteSpecification[]>
-  templateSpecifications: (app: MinimalAppIdentifiers) => Promise<ExtensionTemplate[]>
-  createApp: (org: Organization, name: string, options?: CreateAppOptions) => Promise<OrganizationApp>
-  devStoresForOrg: (orgId: string) => Promise<OrganizationStore[]>
-  storeByDomain: (orgId: string, shopDomain: string) => Promise<FindStoreByDomainSchema>
+  templateSpecifications: (app: MinimalAppIdentifiers) => Promise<ExtensionTemplatesResult>
+  createApp: (org: Organization, options: CreateAppOptions) => Promise<OrganizationApp>
+  devStoresForOrg: (orgId: string, searchTerm?: string) => Promise<Paginateable<{stores: OrganizationStore[]}>>
+  storeByDomain: (orgId: string, shopDomain: string) => Promise<OrganizationStore | undefined>
+  ensureUserAccessToStore: (orgId: string, store: OrganizationStore) => Promise<void>
   appExtensionRegistrations: (
     app: MinimalAppIdentifiers,
     activeAppVersion?: AppVersion,
@@ -252,20 +274,46 @@ export interface DeveloperPlatformClient {
     input: SchemaDefinitionByTargetQueryVariables,
     apiKey: string,
     organizationId: string,
-    appId?: string,
   ) => Promise<string | null>
   apiSchemaDefinition: (
     input: SchemaDefinitionByApiTypeQueryVariables,
     apiKey: string,
     organizationId: string,
-    appId?: string,
   ) => Promise<string | null>
   migrateToUiExtension: (input: MigrateToUiExtensionVariables) => Promise<MigrateToUiExtensionSchema>
   toExtensionGraphQLType: (input: string) => string
-  subscribeToAppLogs: (input: AppLogsSubscribeVariables) => Promise<AppLogsSubscribeResponse>
+  subscribeToAppLogs: (
+    input: AppLogsSubscribeMutationVariables,
+    organizationId: string,
+  ) => Promise<AppLogsSubscribeMutation>
+  appLogs: (options: AppLogsOptions, organizationId: string) => Promise<AppLogsResponse>
   appDeepLink: (app: MinimalAppIdentifiers) => Promise<string>
-  devSessionCreate: (input: DevSessionOptions) => Promise<DevSessionCreateMutation>
-  devSessionUpdate: (input: DevSessionOptions) => Promise<DevSessionUpdateMutation>
-  devSessionDelete: (input: Omit<DevSessionOptions, 'assetsUrl'>) => Promise<DevSessionDeleteMutation>
-  getCreateDevStoreLink: (input: string) => Promise<string>
+  devSessionCreate: (input: DevSessionCreateOptions) => Promise<DevSessionCreateMutation>
+  devSessionUpdate: (input: DevSessionUpdateOptions) => Promise<DevSessionUpdateMutation>
+  devSessionDelete: (input: DevSessionSharedOptions) => Promise<DevSessionDeleteMutation>
+  getCreateDevStoreLink: (org: Organization) => Promise<TokenItem>
+}
+
+const inProgressRefreshes = new WeakMap<DeveloperPlatformClient, Promise<string>>()
+
+export function createUnauthorizedHandler(client: DeveloperPlatformClient): UnauthorizedHandler {
+  return {
+    type: 'token_refresh',
+    handler: async () => {
+      let tokenRefresher = inProgressRefreshes.get(client)
+      if (tokenRefresher) {
+        const token = await tokenRefresher
+        return {token}
+      } else {
+        try {
+          tokenRefresher = client.unsafeRefreshToken()
+          inProgressRefreshes.set(client, tokenRefresher)
+          const token = await tokenRefresher
+          return {token}
+        } finally {
+          inProgressRefreshes.delete(client)
+        }
+      }
+    },
+  }
 }

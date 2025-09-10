@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 import {AppErrors, isWebType} from './loader.js'
 import {ensurePathStartsWithSlash} from './validation/common.js'
+import {Identifiers} from './identifiers.js'
 import {ExtensionInstance} from '../extensions/extension-instance.js'
 import {isType} from '../../utilities/types.js'
 import {FunctionConfigType} from '../extensions/specifications/function.js'
@@ -8,20 +9,37 @@ import {ExtensionSpecification, RemoteAwareExtensionSpecification} from '../exte
 import {AppConfigurationUsedByCli} from '../extensions/specifications/types/app_config.js'
 import {EditorExtensionCollectionType} from '../extensions/specifications/editor_extension_collection.js'
 import {UIExtensionSchema} from '../extensions/specifications/ui_extension.js'
-import {Flag} from '../../utilities/developer-platform-client.js'
+import {CreateAppOptions, Flag} from '../../utilities/developer-platform-client.js'
 import {AppAccessSpecIdentifier} from '../extensions/specifications/app_config_app_access.js'
 import {WebhookSubscriptionSchema} from '../extensions/specifications/app_config_webhook_schemas/webhook_subscription_schema.js'
+import {configurationFileNames} from '../../constants.js'
+import {ApplicationURLs} from '../../services/dev/urls.js'
+import {patchAppHiddenConfigFile} from '../../services/app/patch-app-configuration-file.js'
+import {joinPath} from '@shopify/cli-kit/node/path'
 import {ZodObjectOf, zod} from '@shopify/cli-kit/node/schema'
 import {DotEnvFile} from '@shopify/cli-kit/node/dot-env'
 import {getDependencies, PackageManager, readAndParsePackageJson} from '@shopify/cli-kit/node/node-package-manager'
-import {fileRealPath, findPathUp} from '@shopify/cli-kit/node/fs'
-import {joinPath} from '@shopify/cli-kit/node/path'
+import {
+  fileExistsSync,
+  fileRealPath,
+  findPathUp,
+  readFileSync,
+  removeFileSync,
+  writeFileSync,
+} from '@shopify/cli-kit/node/fs'
 import {AbortError} from '@shopify/cli-kit/node/error'
 import {normalizeDelimitedString} from '@shopify/cli-kit/common/string'
 import {JsonMapType} from '@shopify/cli-kit/node/toml'
 import {getArrayRejectingUndefined} from '@shopify/cli-kit/common/array'
+import {deepMergeObjects} from '@shopify/cli-kit/common/object'
 
 // Schemas for loading app configuration
+
+const ExtensionDirectoriesSchema = zod
+  .array(zod.string())
+  .optional()
+  .transform(removeTrailingPathSeparator)
+  .transform(fixSingleWildcards)
 
 /**
  * Schema for a freshly minted app template.
@@ -34,7 +52,7 @@ export const LegacyAppSchema = zod
       .string()
       .transform((scopes) => normalizeDelimitedString(scopes) ?? '')
       .default(''),
-    extension_directories: zod.array(zod.string()).optional().transform(removeTrailingPathSeparator),
+    extension_directories: ExtensionDirectoriesSchema,
     web_directories: zod.array(zod.string()).optional(),
     webhooks: zod
       .object({
@@ -49,13 +67,19 @@ function removeTrailingPathSeparator(value: string[] | undefined) {
   // eslint-disable-next-line no-useless-escape
   return value?.map((dir) => dir.replace(/[\/\\]+$/, ''))
 }
+
+// If a path ends with a single asterisk, modify it to end with a double asterisk.
+// This is to support the glob pattern used by chokidar and watch for changes in subfolders.
+function fixSingleWildcards(value: string[] | undefined) {
+  // eslint-disable-next-line no-useless-escape
+  return value?.map((dir) => dir.replace(/([^\*])\*$/, '$1**'))
+}
+
 /**
  * Schema for a normal, linked app. Properties from modules are not validated.
  */
 export const AppSchema = zod.object({
   client_id: zod.string(),
-  app_id: zod.string().optional(),
-  organization_id: zod.string().optional(),
   build: zod
     .object({
       automatically_update_urls_on_dev: zod.boolean().optional(),
@@ -63,9 +87,18 @@ export const AppSchema = zod.object({
       include_config_on_deploy: zod.boolean().optional(),
     })
     .optional(),
-  extension_directories: zod.array(zod.string()).optional().transform(removeTrailingPathSeparator),
+  extension_directories: ExtensionDirectoriesSchema,
   web_directories: zod.array(zod.string()).optional(),
 })
+
+/**
+ * Hidden configuration for an app. Stored inside ./shopify/project.json
+ * This is a set of values that are needed by the CLI that are not part of the app configuration.
+ * These are not meant to be git tracked and the user doesn't need to know about their existence.
+ */
+export interface AppHiddenConfig {
+  dev_store_url?: string
+}
 
 /**
  * Utility schema that matches freshly minted or normal, linked, apps.
@@ -108,7 +141,7 @@ export type SchemaForConfig<TConfig extends {path: string}> = ZodObjectOf<Omit<T
 
 export function getAppVersionedSchema(
   specs: ExtensionSpecification[],
-  allowDynamicallySpecifiedConfigs = false,
+  allowDynamicallySpecifiedConfigs = true,
 ): ZodObjectOf<Omit<CurrentAppConfiguration, 'path'>> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const schema = specs.reduce<any>((schema, spec) => spec.contributeToAppConfigurationSchema(schema), AppSchema)
@@ -166,11 +199,15 @@ export function usesLegacyScopesBehavior(config: AppConfiguration) {
   return false
 }
 
+export function appHiddenConfigPath(appDirectory: string) {
+  return joinPath(appDirectory, configurationFileNames.hiddenFolder, configurationFileNames.hiddenConfig)
+}
+
 /**
  * Get the field names from the configuration that aren't found in the basic built-in app configuration schema.
  */
 export function filterNonVersionedAppFields(configuration: object): string[] {
-  const builtInFieldNames = Object.keys(AppSchema.shape).concat('path')
+  const builtInFieldNames = Object.keys(AppSchema.shape).concat('path', 'organization_id')
   return Object.keys(configuration).filter((fieldName) => {
     return !builtInFieldNames.includes(fieldName)
   })
@@ -228,6 +265,21 @@ export interface AppConfigurationInterface<
 
 export type AppLinkedInterface = AppInterface<CurrentAppConfiguration, RemoteAwareExtensionSpecification>
 
+export interface AppManifest extends JsonMapType {
+  name: string
+  handle: string
+  modules: ManifestModule[]
+}
+
+export interface ManifestModule extends JsonMapType {
+  type: string
+  handle: string
+  uid: string
+  assets: string
+  target: string
+  config: JsonMapType
+}
+
 export interface AppInterface<
   TConfig extends AppConfiguration = AppConfiguration,
   TModuleSpec extends ExtensionSpecification = ExtensionSpecification,
@@ -243,7 +295,9 @@ export interface AppInterface<
   realExtensions: ExtensionInstance[]
   draftableExtensions: ExtensionInstance[]
   errors?: AppErrors
+  hiddenConfig: AppHiddenConfig
   includeConfigOnDeploy: boolean | undefined
+  readonly devApplicationURLs?: ApplicationURLs
   updateDependencies: () => Promise<void>
   extensionsForType: (spec: {identifier: string; externalIdentifier: string}) => ExtensionInstance[]
   updateExtensionUUIDS: (uuids: {[key: string]: string}) => void
@@ -258,9 +312,12 @@ export interface AppInterface<
   /**
    * If creating an app on the platform based on this app and its configuration, what default options should the app take?
    */
-  creationDefaultOptions(): AppCreationDefaultOptions
-  manifest: () => Promise<JsonMapType>
-  removeExtension: (extensionHandle: string) => void
+  creationDefaultOptions(): CreateAppOptions
+  manifest: (identifiers: Identifiers | undefined) => Promise<AppManifest>
+  removeExtension: (extensionUid: string) => void
+  updateHiddenConfig: (values: Partial<AppHiddenConfig>) => Promise<void>
+  setDevApplicationURLs: (devApplicationURLs: ApplicationURLs) => void
+  generateExtensionTypes(): Promise<void>
 }
 
 type AppConstructor<
@@ -277,6 +334,8 @@ type AppConstructor<
   errors?: AppErrors
   specifications: ExtensionSpecification[]
   remoteFlags?: Flag[]
+  hiddenConfig: AppHiddenConfig
+  devApplicationURLs?: ApplicationURLs
 }
 
 export class App<
@@ -298,6 +357,8 @@ export class App<
   configSchema: ZodObjectOf<Omit<TConfig, 'path'>>
   remoteFlags: Flag[]
   realExtensions: ExtensionInstance[]
+  devApplicationURLs?: ApplicationURLs
+  private _hiddenConfig: AppHiddenConfig
 
   constructor({
     name,
@@ -313,6 +374,8 @@ export class App<
     specifications,
     configSchema,
     remoteFlags,
+    hiddenConfig,
+    devApplicationURLs,
   }: AppConstructor<TConfig, TModuleSpec>) {
     this.name = name
     this.directory = directory
@@ -327,11 +390,13 @@ export class App<
     this.specifications = specifications
     this.configSchema = configSchema ?? AppSchema
     this.remoteFlags = remoteFlags ?? []
+    this._hiddenConfig = hiddenConfig
+    if (devApplicationURLs) this.setDevApplicationURLs(devApplicationURLs)
   }
 
   get allExtensions() {
-    if (this.includeConfigOnDeploy) return this.realExtensions
-    return this.realExtensions.filter((ext) => !ext.isAppConfigExtension)
+    if (this.includeConfigOnDeploy === false) return this.realExtensions.filter((ext) => !ext.isAppConfigExtension)
+    return this.realExtensions
   }
 
   get draftableExtensions() {
@@ -340,12 +405,12 @@ export class App<
     )
   }
 
-  get appManagementApiEnabled() {
-    if (isLegacyAppSchema(this.configuration)) return false
-    return this.configuration.organization_id !== undefined
+  setDevApplicationURLs(devApplicationURLs: ApplicationURLs) {
+    this.patchAppConfiguration(devApplicationURLs)
+    this.realExtensions.forEach((ext) => ext.patchWithAppDevURLs(devApplicationURLs))
   }
 
-  async manifest(): Promise<JsonMapType> {
+  async manifest(identifiers: Identifiers | undefined): Promise<AppManifest> {
     const modules = await Promise.all(
       this.realExtensions.map(async (module) => {
         const config = await module.deployConfig({
@@ -356,17 +421,18 @@ export class App<
           type: module.externalType,
           handle: module.handle,
           uid: module.uid,
-          assets: module.configuration.uid ?? module.handle,
+          uuid: identifiers?.extensions[module.localIdentifier],
+          assets: module.uid,
           target: module.contextValue,
           config: (config ?? {}) as JsonMapType,
         }
       }),
     )
-    const realModules = getArrayRejectingUndefined(modules)
+
     return {
       name: this.name,
       handle: '',
-      modules: realModules,
+      modules: getArrayRejectingUndefined(modules),
     }
   }
 
@@ -375,7 +441,20 @@ export class App<
     this.nodeDependencies = nodeDependencies
   }
 
+  get hiddenConfig() {
+    return this._hiddenConfig
+  }
+
+  async updateHiddenConfig(values: Partial<AppHiddenConfig>) {
+    if (!this.configuration.client_id) return
+    this._hiddenConfig = deepMergeObjects(this.hiddenConfig, values)
+    const path = appHiddenConfigPath(this.directory)
+    await patchAppHiddenConfigFile(path, String(this.configuration.client_id), this.hiddenConfig)
+  }
+
   async preDeployValidation() {
+    this.validateWebhookLegacyFlowCompatibility()
+
     const functionExtensionsWithUiHandle = this.allExtensions.filter(
       (ext) => ext.isFunctionExtension && (ext.configuration as unknown as FunctionConfigType).ui?.handle,
     ) as ExtensionInstance<FunctionConfigType>[]
@@ -417,25 +496,103 @@ export class App<
     const frontendConfig = this.webs.find((web) => isWebType(web, WebType.Frontend))
     const backendConfig = this.webs.find((web) => isWebType(web, WebType.Backend))
 
-    return Boolean(frontendConfig || backendConfig)
+    return Boolean(frontendConfig ?? backendConfig)
   }
 
-  creationDefaultOptions(): AppCreationDefaultOptions {
+  get appIsEmbedded() {
+    if (isCurrentAppSchema(this.configuration)) return this.configuration.embedded
+    return this.appIsLaunchable()
+  }
+
+  creationDefaultOptions(): CreateAppOptions {
     return {
       isLaunchable: this.appIsLaunchable(),
       scopesArray: getAppScopesArray(this.configuration),
       name: this.name,
+      isEmbedded: this.appIsEmbedded,
+      directory: this.directory,
     }
   }
 
-  removeExtension(extensionHandle: string) {
-    this.realExtensions = this.realExtensions.filter((ext) => ext.handle !== extensionHandle)
+  removeExtension(extensionUid: string) {
+    this.realExtensions = this.realExtensions.filter((ext) => ext.uid !== extensionUid)
+  }
+
+  async generateExtensionTypes() {
+    const typeDefinitionsByFile = new Map<string, Set<string>>()
+    await Promise.all(
+      this.allExtensions.map((extension) => extension.contributeToSharedTypeFile(typeDefinitionsByFile)),
+    )
+    typeDefinitionsByFile.forEach((types, typeFilePath) => {
+      const exists = fileExistsSync(typeFilePath)
+      // No types to add, remove the file if it exists
+      if (types.size === 0) {
+        if (exists) {
+          removeFileSync(typeFilePath)
+        }
+        return
+      }
+
+      const originalContent = exists ? readFileSync(typeFilePath).toString() : ''
+      // We need this top-level import to work around the TS restriction of not allowing  declaring modules with relative paths.
+      // This is needed to enable file-specific global type declarations.
+      const typeContent = [`import '@shopify/ui-extensions';\n`, ...Array.from(types)].join('\n')
+      if (originalContent === typeContent) {
+        return
+      }
+      writeFileSync(typeFilePath, typeContent)
+    })
   }
 
   get includeConfigOnDeploy() {
     if (isLegacyAppSchema(this.configuration)) return false
-    if (this.appManagementApiEnabled) return true
     return this.configuration.build?.include_config_on_deploy
+  }
+
+  private patchAppConfiguration(devApplicationURLs: ApplicationURLs) {
+    if (!isCurrentAppSchema(this.configuration)) return
+
+    this.devApplicationURLs = devApplicationURLs
+    this.configuration.application_url = devApplicationURLs.applicationUrl
+    if (devApplicationURLs.appProxy) {
+      this.configuration.app_proxy = {
+        url: devApplicationURLs.appProxy.proxyUrl,
+        subpath: devApplicationURLs.appProxy.proxySubPath,
+        prefix: devApplicationURLs.appProxy.proxySubPathPrefix,
+      }
+    }
+    if (this.configuration.auth?.redirect_urls) {
+      this.configuration.auth.redirect_urls = devApplicationURLs.redirectUrlWhitelist
+    }
+  }
+
+  /**
+   * Validates that app-specific webhooks are not used with legacy install flow.
+   * This incompatibility exists because app-specific webhooks require declarative
+   * scopes in the Partner Dashboard, which aren't synced when using legacy flow.
+   * @throws When app-specific webhooks are used with legacy install flow
+   */
+  private validateWebhookLegacyFlowCompatibility(): void {
+    if (!isCurrentAppSchema(this.configuration)) return
+
+    const hasAppSpecificWebhooks =
+      this.configuration.webhooks?.subscriptions?.some(
+        (subscription) => subscription.topics && subscription.topics.length > 0,
+      ) ?? false
+    const usesLegacyInstallFlow = this.configuration.access_scopes?.use_legacy_install_flow === true
+
+    if (hasAppSpecificWebhooks && usesLegacyInstallFlow) {
+      throw new AbortError(
+        'App-specific webhook subscriptions are not supported when use_legacy_install_flow is enabled.',
+        `To use app-specific webhooks, you need to:
+1. Remove 'use_legacy_install_flow = true' from your configuration
+2. Run 'shopify app deploy' to sync your scopes with the Partner Dashboard
+
+Alternatively, continue using shop-specific webhooks with the legacy install flow.
+
+Learn more: https://shopify.dev/docs/apps/build/authentication-authorization/app-installation`,
+      )
+    }
   }
 }
 
@@ -451,7 +608,7 @@ export function validateFunctionExtensionsWithUiHandle(
     const matchingExtension = findExtensionByHandle(allExtensions, uiHandle)
     if (!matchingExtension) {
       errors.push(`[${extension.name}] - Local app must contain a ui_extension with handle '${uiHandle}'`)
-    } else if (matchingExtension.configuration.type !== 'ui_extension') {
+    } else if (matchingExtension.type !== 'ui_extension') {
       errors.push(
         `[${extension.name}] - Local app must contain one extension of type 'ui_extension' and handle '${uiHandle}'`,
       )
@@ -534,10 +691,4 @@ export async function getDependencyVersion(dependency: string, directory: string
   const packageContent = await readAndParsePackageJson(packagePath)
   if (!packageContent.version) return 'not_found'
   return {name: dependency, version: packageContent.version}
-}
-
-export interface AppCreationDefaultOptions {
-  isLaunchable: boolean
-  scopesArray: string[]
-  name: string
 }

@@ -7,17 +7,19 @@ export type Key = string
 
 export type ThemeFSEventName = 'add' | 'change' | 'unlink'
 
+type OnSync = (onSuccess: () => void, onError?: () => void) => void
+
 type ThemeFSEvent =
   | {
       type: 'unlink'
-      payload: {fileKey: Key; onSync?: (fn: () => void) => void}
+      payload: {fileKey: Key; onSync: OnSync}
     }
   | {
       type: 'add' | 'change'
       payload: {
         fileKey: Key
         onContent: (fn: (content: string) => void) => void
-        onSync: (fn: () => void) => void
+        onSync: OnSync
       }
     }
 
@@ -99,6 +101,11 @@ export interface ThemeFileSystem extends VirtualFileSystem {
    * Applies filters to ignore files from .shopifyignore file, --ignore and --only flags.
    */
   applyIgnoreFilters: <T extends {key: string}>(files: T[]) => T[]
+
+  /**
+   * Stores upload errors returned when uploading files via the Asset API
+   */
+  uploadErrors: Map<Key, string[]>
 }
 
 /**

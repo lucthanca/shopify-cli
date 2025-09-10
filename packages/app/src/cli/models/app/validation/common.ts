@@ -6,6 +6,10 @@ export function validateUrl(zodType: zod.ZodString, {httpsOnly = false, message 
     .refine((value) => !value.includes('\n'), {message})
 }
 
+export function validateRelativeUrl(zodType: zod.ZodString, {message = 'URL must be HTTPS URL or start with /'} = {}) {
+  return zodType.refine((value) => value.startsWith('/') || isValidUrl(value, true), {message})
+}
+
 function isValidUrl(input: string, httpsOnly: boolean) {
   try {
     const url = new URL(input)
@@ -19,4 +23,10 @@ function isValidUrl(input: string, httpsOnly: boolean) {
 
 export function ensurePathStartsWithSlash(arg: unknown) {
   return typeof arg === 'string' && !arg.startsWith('/') ? `/${arg}` : arg
+}
+
+export const APP_NAME_MAX_LENGTH = 30
+
+export function isValidName(name: string): boolean {
+  return name.length <= APP_NAME_MAX_LENGTH
 }

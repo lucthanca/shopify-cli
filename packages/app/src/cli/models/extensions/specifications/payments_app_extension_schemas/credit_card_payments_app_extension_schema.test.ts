@@ -21,6 +21,7 @@ const config: CreditCardPaymentsAppExtensionConfigType = {
   supported_countries: ['CA'],
   supported_payment_methods: ['PAYMENT_METHOD'],
   supported_buyer_contexts: [{currency: 'USD'}, {currency: 'CAD'}],
+  supports_moto: true,
   supports_3ds: false,
   test_mode_available: true,
   supports_deferred_payments: false,
@@ -29,7 +30,6 @@ const config: CreditCardPaymentsAppExtensionConfigType = {
   targeting: [{target: 'payments.credit-card.render'}],
   api_version: '2022-07',
   description: 'my payments app extension',
-  metafields: [],
   ui_extension_handle: 'sample-ui-extension',
   encryption_certificate_fingerprint: 'fingerprint',
   checkout_payment_method_fields: [{type: 'string', required: false, key: 'sample_key'}],
@@ -84,28 +84,6 @@ describe('CreditCardPaymentsAppExtensionSchema', () => {
           code: zod.ZodIssueCode.custom,
           message: 'Property required when supports_3ds is true',
           path: ['confirmation_callback_url'],
-        },
-      ]),
-    )
-  })
-
-  test('returns an error if encryption certificate fingerprint is blank', async () => {
-    // When/Then
-    expect(() =>
-      CreditCardPaymentsAppExtensionSchema.parse({
-        ...config,
-        encryption_certificate_fingerprint: '',
-      }),
-    ).toThrowError(
-      new zod.ZodError([
-        {
-          code: zod.ZodIssueCode.too_small,
-          minimum: 1,
-          type: 'string',
-          inclusive: true,
-          exact: false,
-          message: "Encryption certificate fingerprint can't be blank",
-          path: ['encryption_certificate_fingerprint'],
         },
       ]),
     )
@@ -172,6 +150,46 @@ describe('CreditCardPaymentsAppExtensionSchema', () => {
       ]),
     )
   })
+
+  test('returns an error if supports_moto is not a boolean', async () => {
+    // When/Then
+    expect(() =>
+      CreditCardPaymentsAppExtensionSchema.parse({
+        ...config,
+        supports_moto: 'true',
+      }),
+    ).toThrowError(
+      new zod.ZodError([
+        {
+          code: 'invalid_type',
+          expected: 'boolean',
+          received: 'string',
+          path: ['supports_moto'],
+          message: 'Value must be Boolean',
+        },
+      ]),
+    )
+  })
+
+  test('returns an error if supports_moto is not present', async () => {
+    // When/Then
+    expect(() =>
+      CreditCardPaymentsAppExtensionSchema.parse({
+        ...config,
+        supports_moto: undefined,
+      }),
+    ).toThrowError(
+      new zod.ZodError([
+        {
+          code: 'invalid_type',
+          expected: 'boolean',
+          received: 'undefined',
+          path: ['supports_moto'],
+          message: 'supports_moto is required',
+        },
+      ]),
+    )
+  })
 })
 
 describe('creditCardPaymentsAppExtensionDeployConfig', () => {
@@ -194,6 +212,7 @@ describe('creditCardPaymentsAppExtensionDeployConfig', () => {
       supported_payment_methods: config.supported_payment_methods,
       supported_buyer_contexts: config.supported_buyer_contexts,
       test_mode_available: config.test_mode_available,
+      supports_moto: config.supports_moto,
       supports_3ds: config.supports_3ds,
       supports_deferred_payments: config.supports_deferred_payments,
       supports_installments: config.supports_installments,

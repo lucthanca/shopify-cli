@@ -1,16 +1,137 @@
 # @shopify/plugin-did-you-mean
 
-## 3.72.2
+## 3.84.1
 
 ### Patch Changes
 
-- @shopify/cli-kit@3.72.2
+- @shopify/cli-kit@3.84.1
 
-## 3.72.1
+## 3.84.0
 
 ### Patch Changes
 
-- @shopify/cli-kit@3.72.1
+- Updated dependencies [9b872dc]
+- Updated dependencies [864c687]
+- Updated dependencies [40e2d6f]
+- Updated dependencies [62d6b9a]
+  - @shopify/cli-kit@3.84.0
+
+## 3.83.0
+
+### Patch Changes
+
+- Updated dependencies [521fb07]
+- Updated dependencies [b1feb1d]
+- Updated dependencies [ee353e9]
+- Updated dependencies [e73e9a5]
+  - @shopify/cli-kit@3.83.0
+
+## 3.82.0
+
+### Patch Changes
+
+- Updated dependencies [0edf793]
+- Updated dependencies [eee4978]
+  - @shopify/cli-kit@3.82.0
+
+## 3.81.1
+
+### Patch Changes
+
+- Updated dependencies [b838f21]
+  - @shopify/cli-kit@3.81.1
+
+## 3.81.0
+
+### Minor Changes
+
+- 24aa2dd: Drop support for Node 18
+
+### Patch Changes
+
+- Updated dependencies [23d4b0b]
+- Updated dependencies [16406ae]
+- Updated dependencies [eb19684]
+- Updated dependencies [24aa2dd]
+- Updated dependencies [9a9e51e]
+  - @shopify/cli-kit@3.81.0
+
+## 3.80.0
+
+### Patch Changes
+
+- Updated dependencies [0cc639e]
+- Updated dependencies [431fd6e]
+- Updated dependencies [8422004]
+- Updated dependencies [6517e43]
+  - @shopify/cli-kit@3.80.0
+
+## 3.79.0
+
+### Patch Changes
+
+- Updated dependencies [f9ac5cf]
+- Updated dependencies [0b1e588]
+- Updated dependencies [94362f9]
+- Updated dependencies [4f17786]
+- Updated dependencies [036bcaf]
+- Updated dependencies [164bbbe]
+- Updated dependencies [68b53f6]
+- Updated dependencies [031feb7]
+  - @shopify/cli-kit@3.79.0
+
+## 3.78.0
+
+### Patch Changes
+
+- @shopify/cli-kit@3.78.0
+
+## 3.77.0
+
+### Patch Changes
+
+- Updated dependencies [73c78ac]
+- Updated dependencies [36dccd6]
+  - @shopify/cli-kit@3.77.0
+
+## 3.76.0
+
+### Patch Changes
+
+- Updated dependencies [4a3895c]
+- Updated dependencies [38e8d7b]
+- Updated dependencies [b1ed29d]
+- Updated dependencies [6449aa6]
+  - @shopify/cli-kit@3.76.0
+
+## 3.75.0
+
+### Patch Changes
+
+- Updated dependencies [da606a6]
+- Updated dependencies [4aee075]
+- Updated dependencies [ab407f3]
+  - @shopify/cli-kit@3.75.0
+
+## 3.74.0
+
+### Patch Changes
+
+- Updated dependencies [7e34195c30]
+- Updated dependencies [1a5aec270d]
+- Updated dependencies [bb3b100731]
+- Updated dependencies [369351435b]
+- Updated dependencies [f004019bb9]
+  - @shopify/cli-kit@3.74.0
+
+## 3.73.0
+
+### Patch Changes
+
+- Updated dependencies [beab713acd]
+- Updated dependencies [4d722c64fc]
+- Updated dependencies [03fb93e3c9]
+  - @shopify/cli-kit@3.73.0
 
 ## 3.72.0
 

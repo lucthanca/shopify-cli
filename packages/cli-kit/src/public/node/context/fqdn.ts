@@ -1,7 +1,8 @@
 import {spinFqdn} from './spin.js'
-import {AbortError} from '../error.js'
+import {AbortError, BugError} from '../error.js'
 import {serviceEnvironment} from '../../../private/node/context/service.js'
-import {DevServer, DevServerCore} from '../vendor/dev_server/DevServer.js'
+import {DevServer, DevServerCore} from '../vendor/dev_server/index.js'
+import {blockPartnersAccess} from '../environment.js'
 
 export const CouldntObtainPartnersSpinFQDNError = new AbortError(
   "Couldn't obtain the Spin FQDN for Partners when the CLI is not running from a Spin environment.",
@@ -22,6 +23,9 @@ export const NotProvidedStoreFQDNError = new AbortError(
  * @returns Fully-qualified domain of the partners service we should interact with.
  */
 export async function partnersFqdn(): Promise<string> {
+  if (blockPartnersAccess()) {
+    throw new BugError('Partners API is blocked by the SHOPIFY_CLI_NEVER_USE_PARTNERS_API environment variable.')
+  }
   const environment = serviceEnvironment()
   const productionFqdn = 'partners.shopify.com'
   switch (environment) {
@@ -29,6 +33,24 @@ export async function partnersFqdn(): Promise<string> {
       return new DevServer('partners').host()
     case 'spin':
       return `partners.${await spinFqdn()}`
+    default:
+      return productionFqdn
+  }
+}
+
+/**
+ * It returns the Admin service we should interact with.
+ *
+ * @returns Fully-qualified domain of the Admin service we should interact with.
+ */
+export async function adminFqdn(): Promise<string> {
+  const environment = serviceEnvironment()
+  const productionFqdn = 'admin.shopify.com'
+  switch (environment) {
+    case 'local':
+      return new DevServerCore().host('admin')
+    case 'spin':
+      return `admin.shopify.${await spinFqdn()}`
     default:
       return productionFqdn
   }
@@ -52,6 +74,21 @@ export async function appManagementFqdn(): Promise<string> {
   }
 }
 
+/**
+ * It returns the App Dev API service we should interact with.
+ *
+ * @param storeFqdn - The store FQDN.
+ * @returns Fully-qualified domain of the App Dev service we should interact with.
+ */
+export async function appDevFqdn(storeFqdn: string): Promise<string> {
+  const environment = serviceEnvironment()
+  switch (environment) {
+    case 'local':
+      return new DevServerCore().host('app')
+    default:
+      return storeFqdn
+  }
+}
 /**
  * It returns the Developer Dashboard domain we should interact with.
  *

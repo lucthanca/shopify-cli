@@ -4,11 +4,13 @@ import ThemeCommand, {FlagValues} from '../../utilities/theme-command.js'
 import {dev} from '../../services/dev.js'
 import {DevelopmentThemeManager} from '../../utilities/development-theme-manager.js'
 import {findOrSelectTheme} from '../../utilities/theme-selector.js'
+import {metafieldsPull} from '../../services/metafields-pull.js'
+import {validateThemePassword} from '../../services/flags-validation.js'
 import {Flags} from '@oclif/core'
 import {globalFlags} from '@shopify/cli-kit/node/cli'
 import {Theme} from '@shopify/cli-kit/node/themes/types'
 import {ensureAuthenticatedThemes} from '@shopify/cli-kit/node/session'
-import type {LiveReload} from '../../utilities/theme-environment/types.js'
+import type {ErrorOverlayMode, LiveReload} from '../../utilities/theme-environment/types.js'
 
 export default class Dev extends ThemeCommand {
   static summary =
@@ -39,7 +41,7 @@ You can run this command only in a directory that matches the [default Shopify t
 
   static flags = {
     ...globalFlags,
-    path: themeFlags.path,
+    ...themeFlags,
     host: Flags.string({
       description: 'Set which network interface the web server listens on. The default value is 127.0.0.1.',
       env: 'SHOPIFY_FLAG_HOST',
@@ -52,6 +54,15 @@ You can run this command only in a directory that matches the [default Shopify t
       default: 'hot-reload',
       options: ['hot-reload', 'full-page', 'off'],
       env: 'SHOPIFY_FLAG_LIVE_RELOAD',
+    }),
+    'error-overlay': Flags.string({
+      description: `Controls the visibility of the error overlay when an theme asset upload fails:
+- silent Prevents the error overlay from appearing.
+- default Displays the error overlay.
+      `,
+      options: ['silent', 'default'],
+      default: 'default',
+      env: 'SHOPIFY_FLAG_ERROR_OVERLAY',
     }),
     poll: Flags.boolean({
       hidden: true,
@@ -66,7 +77,6 @@ You can run this command only in a directory that matches the [default Shopify t
       description: 'Local port to serve theme preview from.',
       env: 'SHOPIFY_FLAG_PORT',
     }),
-    store: themeFlags.store,
     theme: Flags.string({
       char: 't',
       description: 'Theme ID or name of the remote theme.',
@@ -96,8 +106,6 @@ You can run this command only in a directory that matches the [default Shopify t
       description: 'Proceed without confirmation, if current directory does not seem to be theme directory.',
       env: 'SHOPIFY_FLAG_FORCE',
     }),
-    password: themeFlags.password,
-    environment: themeFlags.environment,
     notify: Flags.string({
       description:
         'The file path or URL. The file path is to a file that you want updated on idle. The URL path is where you want a webhook posted to report on file changes.',
@@ -118,6 +126,8 @@ You can run this command only in a directory that matches the [default Shopify t
     const parsed = await this.parse(Dev)
     let flags = parsed.flags as typeof parsed.flags & FlagValues
     const {ignore = [], only = []} = flags
+
+    validateThemePassword(flags.password)
 
     const store = ensureThemeStore(flags)
     const adminSession = await ensureAuthenticatedThemes(store, flags.password)
@@ -146,6 +156,7 @@ You can run this command only in a directory that matches the [default Shopify t
       host: flags.host,
       port: flags.port,
       'live-reload': flags['live-reload'] as LiveReload,
+      'error-overlay': flags['error-overlay'] as ErrorOverlayMode,
       force: flags.force,
       open: flags.open,
       'theme-editor-sync': flags['theme-editor-sync'],
@@ -153,6 +164,16 @@ You can run this command only in a directory that matches the [default Shopify t
       ignore,
       only,
       notify: flags.notify,
+    })
+
+    await metafieldsPull({
+      path: flags.path,
+      password: flags.password,
+      store: flags.store,
+      force: flags.force,
+      verbose: flags.verbose,
+      noColor: flags['no-color'],
+      silent: true,
     })
   }
 }

@@ -8,7 +8,7 @@ import {resolvePath, cwd} from '@shopify/cli-kit/node/path'
  */
 export const themeFlags = {
   path: Flags.string({
-    description: 'The path to your theme directory.',
+    description: 'The path where you want to run the command. Defaults to the current working directory.',
     env: 'SHOPIFY_FLAG_PATH',
     parse: async (input) => resolvePath(input),
     default: async () => cwd(),
@@ -30,5 +30,25 @@ export const themeFlags = {
     char: 'e',
     description: 'The environment to apply to the current command.',
     env: 'SHOPIFY_FLAG_ENVIRONMENT',
+    multiple: true,
   }),
 }
+
+const globQuotesDescription = "Wrap the value in double quotes if you're using wildcards."
+
+export const globFlags = (action: 'download' | 'upload') => ({
+  only: Flags.string({
+    char: 'o',
+    multiple: true,
+    description: `${
+      action.charAt(0).toUpperCase() + action.slice(1)
+    } only the specified files (Multiple flags allowed). ${globQuotesDescription}`,
+    env: 'SHOPIFY_FLAG_ONLY',
+  }),
+  ignore: Flags.string({
+    char: 'x',
+    multiple: true,
+    description: `Skip ${action}ing the specified files (Multiple flags allowed). ${globQuotesDescription}`,
+    env: 'SHOPIFY_FLAG_IGNORE',
+  }),
+})

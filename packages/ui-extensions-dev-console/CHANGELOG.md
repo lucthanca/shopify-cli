@@ -1,8 +1,41 @@
 # @shopify/ui-extensions-dev-console-app
 
-## 3.72.2
+## 3.84.1
 
-## 3.72.1
+## 3.84.0
+
+## 3.83.0
+
+## 3.82.0
+
+### Patch Changes
+
+- Updated dependencies [386bf0e]
+  - @shopify/ui-extensions-server-kit@5.3.0
+
+## 3.81.1
+
+## 3.81.0
+
+### Minor Changes
+
+- ce3dfdc: Print all log messages to stderr instead of stdout
+
+## 3.80.0
+
+## 3.79.0
+
+## 3.78.0
+
+## 3.77.0
+
+## 3.76.0
+
+## 3.75.0
+
+## 3.74.0
+
+## 3.73.0
 
 ## 3.72.0
 

@@ -1,10 +1,27 @@
-import {buildGraphqlTypes, bundleExtension, runJavy, ExportJavyBuilder, jsExports} from './build.js'
-import {javyBinary, javyPluginBinary} from './binaries.js'
+import {
+  buildGraphqlTypes,
+  bundleExtension,
+  runJavy,
+  ExportJavyBuilder,
+  jsExports,
+  runWasmOpt,
+  runTrampoline,
+  buildJSFunction,
+} from './build.js'
+import {
+  javyBinary,
+  javyPluginBinary,
+  wasmOptBinary,
+  trampolineBinary,
+  PREFERRED_FUNCTION_RUNNER_VERSION,
+  PREFERRED_JAVY_VERSION,
+  PREFERRED_JAVY_PLUGIN_VERSION,
+} from './binaries.js'
 import {testApp, testFunctionExtension} from '../../models/app/app.test-data.js'
 import {beforeEach, describe, expect, test, vi} from 'vitest'
 import {exec} from '@shopify/cli-kit/node/system'
-import {joinPath} from '@shopify/cli-kit/node/path'
-import {inTemporaryDirectory, mkdir, writeFile} from '@shopify/cli-kit/node/fs'
+import {dirname, joinPath} from '@shopify/cli-kit/node/path'
+import {inTemporaryDirectory, mkdir, writeFile, removeFile} from '@shopify/cli-kit/node/fs'
 import {build as esBuild} from 'esbuild'
 
 vi.mock('@shopify/cli-kit/node/system')
@@ -19,6 +36,12 @@ vi.mock('esbuild', async () => {
 let stdout: any
 let stderr: any
 let signal: any
+
+const derivedDeps = {
+  functionRunner: PREFERRED_FUNCTION_RUNNER_VERSION,
+  javy: PREFERRED_JAVY_VERSION,
+  javyPlugin: PREFERRED_JAVY_PLUGIN_VERSION,
+}
 
 const app = testApp({dotenv: {variables: {VAR_FROM_ENV_FILE: 'env_file_var'}, path: ''}})
 
@@ -63,6 +86,13 @@ async function installShopifyLibrary(tmpDir: string) {
   const shopifyFunction = joinPath(shopifyFunctionDir, 'index.ts')
   await mkdir(shopifyFunctionDir)
   await writeFile(shopifyFunction, '')
+
+  const runModule = joinPath(shopifyFunctionDir, 'run.ts')
+  await writeFile(runModule, '')
+
+  const packageJson = joinPath(shopifyFunctionDir, 'package.json')
+  await writeFile(packageJson, JSON.stringify({version: '1.0.0'}))
+
   return shopifyFunction
 }
 
@@ -78,7 +108,10 @@ describe('bundleExtension', () => {
       const got = bundleExtension(
         ourFunction,
         {stdout, stderr, signal, app},
-        {VAR_FROM_RUNTIME: 'runtime_var', 'INVALID_(VAR)': 'invalid_var'},
+        {
+          VAR_FROM_RUNTIME: 'runtime_var',
+          'INVALID_(VAR)': 'invalid_var',
+        },
       )
 
       // Then
@@ -112,7 +145,45 @@ describe('bundleExtension', () => {
       const got = bundleExtension(ourFunction, {stdout, stderr, signal, app})
 
       // Then
-      await expect(got).rejects.toThrow(/Could not find the Shopify Function runtime/)
+      await expect(got).rejects.toThrow(/Could not find the Shopify Functions JavaScript library/)
+    })
+  })
+
+  test('errors if shopify library lacks the run module', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const ourFunction = await testFunctionExtension({dir: tmpDir})
+      ourFunction.entrySourceFilePath = joinPath(tmpDir, 'src/index.ts')
+      const shopifyFunction = await installShopifyLibrary(tmpDir)
+      await removeFile(joinPath(shopifyFunction, '..', 'run.ts'))
+
+      // When
+      const got = bundleExtension(ourFunction, {stdout, stderr, signal, app})
+
+      // Then
+      await expect(got).rejects.toThrow(/Could not find the Shopify Functions JavaScript library/)
+    })
+  })
+
+  test('errors if shopify function library is not on a compatible version when building a JS function', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const incompatibleVersion = '999.0.0'
+      const ourFunction = await testFunctionExtension({dir: tmpDir})
+      ourFunction.entrySourceFilePath = joinPath(tmpDir, 'src/index.ts')
+      await installShopifyLibrary(tmpDir)
+      await writeFile(
+        joinPath(tmpDir, 'node_modules/@shopify/shopify_function/package.json'),
+        JSON.stringify({version: incompatibleVersion}),
+      )
+
+      // When
+      const got = buildJSFunction(ourFunction, {stdout, stderr, signal, app})
+
+      // Then
+      await expect(got).rejects.toThrow(
+        /The installed version of the Shopify Functions JavaScript library is not compatible with this version of Shopify CLI./,
+      )
     })
   })
 
@@ -137,18 +208,18 @@ describe('runJavy', () => {
     const ourFunction = await testFunctionExtension()
 
     // When
-    const got = runJavy(ourFunction, {stdout, stderr, signal, app})
+    const got = runJavy(ourFunction, {stdout, stderr, signal, app}, derivedDeps)
 
     // Then
     await expect(got).resolves.toBeUndefined()
     expect(exec).toHaveBeenCalledWith(
-      javyBinary().path,
+      javyBinary(derivedDeps.javy).path,
       [
         'build',
         '-C',
         'dynamic',
         '-C',
-        `plugin=${javyPluginBinary().path}`,
+        `plugin=${javyPluginBinary(derivedDeps.javyPlugin).path}`,
         '-o',
         joinPath(ourFunction.directory, 'dist/index.wasm'),
         'dist/function.js',
@@ -163,6 +234,52 @@ describe('runJavy', () => {
   })
 })
 
+describe('runWasmOpt', () => {
+  test('runs wasm-opt on the module', async () => {
+    // Given
+    const ourFunction = await testFunctionExtension()
+    const modulePath = ourFunction.outputPath
+
+    // When
+    const got = runWasmOpt(modulePath)
+
+    // Then
+    await expect(got).resolves.toBeUndefined()
+    expect(exec).toHaveBeenCalledWith(
+      'node',
+      [
+        wasmOptBinary().name,
+        modulePath,
+        '-Oz',
+        '--enable-bulk-memory',
+        '--enable-multimemory',
+        '--enable-nontrapping-float-to-int',
+        '--strip-debug',
+        '-o',
+        modulePath,
+      ],
+      {
+        cwd: dirname(wasmOptBinary().path),
+      },
+    )
+  })
+})
+
+describe('runTrampoline', () => {
+  test('runs trampoline on the module', async () => {
+    // Given
+    const ourFunction = await testFunctionExtension()
+    const modulePath = ourFunction.outputPath
+
+    // When
+    const got = runTrampoline(modulePath)
+
+    // Then
+    await expect(got).resolves.toBeUndefined()
+    expect(exec).toHaveBeenCalledWith(trampolineBinary().path, ['-i', modulePath, '-o', modulePath])
+  })
+})
+
 describe('ExportJavyBuilder', () => {
   const exports = ['foo-bar', 'foo-baz']
   const builder = new ExportJavyBuilder(exports)
@@ -173,12 +290,16 @@ describe('ExportJavyBuilder', () => {
         // Given
         const ourFunction = await testFunctionExtension({dir: tmpDir})
         ourFunction.entrySourceFilePath = joinPath(tmpDir, 'src/index.ts')
+        const shopifyFunction = await installShopifyLibrary(tmpDir)
 
         // When
         const got = builder.bundle(
           ourFunction,
           {stdout, stderr, signal, app},
-          {VAR_FROM_RUNTIME: 'runtime_var', 'INVALID_(VAR)': 'invalid_var'},
+          {
+            VAR_FROM_RUNTIME: 'runtime_var',
+            'INVALID_(VAR)': 'invalid_var',
+          },
         )
 
         // Then
@@ -210,6 +331,7 @@ describe('ExportJavyBuilder', () => {
       await inTemporaryDirectory(async (tmpDir) => {
         // Given
         const ourFunction = await testFunctionExtension({dir: tmpDir})
+        const shopifyFunction = await installShopifyLibrary(tmpDir)
 
         // When
         const got = builder.bundle(ourFunction, {stdout, stderr, signal, app})
@@ -227,19 +349,19 @@ describe('ExportJavyBuilder', () => {
         const ourFunction = await testFunctionExtension()
 
         // When
-        const got = builder.compile(ourFunction, {stdout, stderr, signal, app})
+        const got = builder.compile(ourFunction, {stdout, stderr, signal, app}, derivedDeps)
 
         // Then
         await expect(got).resolves.toBeUndefined()
 
         expect(exec).toHaveBeenCalledWith(
-          javyBinary().path,
+          javyBinary(derivedDeps.javy).path,
           [
             'build',
             '-C',
             'dynamic',
             '-C',
-            `plugin=${javyPluginBinary().path}`,
+            `plugin=${javyPluginBinary(derivedDeps.javyPlugin).path}`,
             '-C',
             expect.stringContaining('wit='),
             '-C',

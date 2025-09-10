@@ -7,20 +7,22 @@ import {
   toFormattedAppLogJson,
   parseAppLogPayload,
 } from '../utils.js'
-import {outputInfo} from '@shopify/cli-kit/node/output'
+import {outputInfo, outputResult} from '@shopify/cli-kit/node/output'
 
 export async function renderJsonLogs({
-  pollOptions: {cursor, filters, jwtToken},
+  pollOptions,
   options: {variables, developerPlatformClient},
   storeNameById,
+  organizationId,
 }: {
   pollOptions: PollOptions
   options: SubscribeOptions
   storeNameById: Map<string, string>
+  organizationId: string
 }): Promise<void> {
-  const response = await pollAppLogs({cursor, filters, jwtToken})
+  const response = await pollAppLogs({pollOptions, developerPlatformClient, organizationId})
   let retryIntervalMs = POLLING_INTERVAL_MS
-  let nextJwtToken = jwtToken
+  let nextJwtToken = pollOptions.jwtToken
 
   const errorResponse = response as ErrorResponse
 
@@ -34,7 +36,7 @@ export async function renderJsonLogs({
         outputInfo(JSON.stringify({message: 'Error while polling app logs.', retry_in_ms: retryIntervalMs}))
       },
       onResubscribe: () => {
-        return subscribeToAppLogs(developerPlatformClient, variables)
+        return subscribeToAppLogs(developerPlatformClient, variables, organizationId)
       },
     })
 
@@ -53,7 +55,7 @@ export async function renderJsonLogs({
         return
       }
 
-      outputInfo(
+      outputResult(
         toFormattedAppLogJson({
           appLog: log,
           appLogPayload: parseAppLogPayload(log.payload, log.log_type),
@@ -68,11 +70,12 @@ export async function renderJsonLogs({
     renderJsonLogs({
       options: {variables, developerPlatformClient},
       pollOptions: {
-        jwtToken: nextJwtToken || jwtToken,
-        cursor: nextCursor || cursor,
-        filters,
+        jwtToken: nextJwtToken || pollOptions.jwtToken,
+        cursor: nextCursor || pollOptions.cursor,
+        filters: pollOptions.filters,
       },
       storeNameById,
+      organizationId,
     }).catch((error) => {
       throw error
     })

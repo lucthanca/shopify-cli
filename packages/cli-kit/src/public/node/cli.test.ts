@@ -1,11 +1,10 @@
 import {clearCache, runCLI, runCreateCLI} from './cli.js'
 import {findUpAndReadPackageJson} from './node-package-manager.js'
 import {mockAndCaptureOutput} from './testing/output.js'
-import {cacheClear} from '../../private/node/conf-store.js'
+import * as confStore from '../../private/node/conf-store.js'
 import {describe, expect, test, vi} from 'vitest'
 
 vi.mock('./node-package-manager.js')
-vi.mock('../../private/node/conf-store.js')
 
 describe('cli', () => {
   test('prepares to run the CLI', async () => {
@@ -56,12 +55,13 @@ describe('cli', () => {
     expect(env.SHOPIFY_CLI_ENV).toBe('development')
   })
 
-  test('warns if running an old Node version', async () => {
+  test('exits if running an old Node version', async () => {
     const launchCLI = vi.fn()
     const outputMock = mockAndCaptureOutput()
-    await runCLI({moduleURL: 'test', development: false}, launchCLI, [], {}, {node: '17.9'} as any)
+    const run = runCLI({moduleURL: 'test', development: false}, launchCLI, [], {}, {node: '17.9'} as any)
+    await expect(run).rejects.toThrow()
     expect(outputMock.output()).toMatchInlineSnapshot(`
-      "╭─ warning ────────────────────────────────────────────────────────────────────╮
+      "╭─ error ──────────────────────────────────────────────────────────────────────╮
       │                                                                              │
       │  Upgrade to a supported Node version now.                                    │
       │                                                                              │
@@ -108,7 +108,9 @@ describe('cli', () => {
 
 describe('clearCache', () => {
   test('clears the cache', () => {
+    const spy = vi.spyOn(confStore, 'cacheClear')
     clearCache()
-    expect(cacheClear).toHaveBeenCalled()
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
   })
 })

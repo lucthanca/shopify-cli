@@ -10,14 +10,15 @@ import {
   noCacheMiddleware,
   redirectToDevConsoleMiddleware,
 } from './server/middlewares.js'
-import {ExtensionsPayloadStore} from './payload/store.js'
-import {ExtensionDevOptions} from '../extension.js'
+import {ExtensionsPayloadStore, ExtensionsPayloadStoreOptions} from './payload/store.js'
+import {ExtensionInstance} from '../../../models/extensions/extension-instance.js'
 import {createApp, createRouter} from 'h3'
 import {createServer} from 'http'
 
 interface SetupHTTPServerOptions {
-  devOptions: ExtensionDevOptions
+  devOptions: ExtensionsPayloadStoreOptions
   payloadStore: ExtensionsPayloadStore
+  getExtensions: () => ExtensionInstance[]
 }
 
 export function setupHTTPServer(options: SetupHTTPServerOptions) {
@@ -41,6 +42,6 @@ export function setupHTTPServer(options: SetupHTTPServerOptions) {
 
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
   const httpServer = createServer(httpApp)
-  httpServer.listen(options.devOptions.port)
+  httpServer.listen(options.devOptions.port, 'localhost')
   return httpServer
 }

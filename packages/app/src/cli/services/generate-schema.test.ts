@@ -40,7 +40,6 @@ describe('generateSchemaService', () => {
       await generateSchemaService({
         app,
         extension,
-        path: tmpDir,
         stdout: false,
         developerPlatformClient: testDeveloperPlatformClient(),
         orgId,
@@ -61,13 +60,12 @@ describe('generateSchemaService', () => {
       const stdout = true
       const orgId = '123'
       const mockOutput = vi.fn()
-      vi.spyOn(output, 'outputInfo').mockImplementation(mockOutput)
+      vi.spyOn(output, 'outputResult').mockImplementation(mockOutput)
 
       // When
       await generateSchemaService({
         app,
         extension,
-        path,
         stdout,
         developerPlatformClient: testDeveloperPlatformClient(),
         orgId,
@@ -93,10 +91,10 @@ describe('generateSchemaService', () => {
             type: 'api_type',
             build: {
               command: 'echo "hello world"',
+              wasm_opt: true,
             },
             api_version: 'unstable',
             configuration_ui: true,
-            metafields: [],
           },
         })
 
@@ -108,7 +106,6 @@ describe('generateSchemaService', () => {
         await generateSchemaService({
           app,
           extension,
-          path,
           stdout: false,
           developerPlatformClient,
           orgId,
@@ -121,7 +118,6 @@ describe('generateSchemaService', () => {
           },
           app.configuration.client_id,
           orgId,
-          app.configuration.app_id,
         )
       })
     })
@@ -148,14 +144,13 @@ describe('generateSchemaService', () => {
             ],
             build: {
               command: 'echo "hello world"',
+              wasm_opt: true,
             },
             api_version: 'unstable',
             configuration_ui: true,
-            metafields: [],
           },
         })
 
-        const path = tmpDir
         const expectedTarget = extension.configuration.targeting![0]!.target
         const version = extension.configuration.api_version
         const orgId = 'test'
@@ -164,7 +159,6 @@ describe('generateSchemaService', () => {
         await generateSchemaService({
           app,
           extension,
-          path,
           stdout: false,
           developerPlatformClient,
           orgId,
@@ -177,7 +171,6 @@ describe('generateSchemaService', () => {
           },
           app.configuration.client_id,
           orgId,
-          app.configuration.app_id,
         )
       })
     })
@@ -196,7 +189,6 @@ describe('generateSchemaService', () => {
     const result = generateSchemaService({
       app,
       extension,
-      path: '',
       stdout: true,
       developerPlatformClient,
       orgId,

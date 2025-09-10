@@ -9,6 +9,7 @@ import {
   NetworkAccessRequestExecutionInBackgroundLog,
   NetworkAccessResponseFromCacheLog,
 } from '../../../types.js'
+import {testDeveloperPlatformClient} from '../../../../../models/app/app.test-data.js'
 import {describe, test, vi, expect} from 'vitest'
 import {render} from '@shopify/cli-kit/node/testing/ui'
 import React from 'react'
@@ -29,6 +30,9 @@ const OUTPUT = {test: 'output'}
 const INPUT = {test: 'input'}
 const INPUT_BYTES = 10
 const OUTPUT_BYTES = 10
+
+const MOCKED_ORGANIZATION_ID = '123'
+const MOCKED_APP_ID = '456'
 
 const NETWORK_ACCESS_HTTP_REQUEST = {
   url: 'https://api.example.com/hello',
@@ -111,6 +115,8 @@ describe('Logs', () => {
           pollOptions={{jwtToken: MOCKED_JWT_TOKEN, filters: EMPTY_FILTERS, cursor: MOCKED_CURSOR}}
           resubscribeCallback={vi.fn().mockResolvedValueOnce(MOCKED_JWT_TOKEN)}
           storeNameById={new Map()}
+          developerPlatformClient={testDeveloperPlatformClient()}
+          organizationId={MOCKED_ORGANIZATION_ID}
         />,
       )
 
@@ -159,6 +165,8 @@ describe('Logs', () => {
           pollOptions={{jwtToken: MOCKED_JWT_TOKEN, filters: EMPTY_FILTERS, cursor: MOCKED_CURSOR}}
           resubscribeCallback={vi.fn().mockResolvedValueOnce(MOCKED_JWT_TOKEN)}
           storeNameById={new Map()}
+          developerPlatformClient={testDeveloperPlatformClient()}
+          organizationId={MOCKED_ORGANIZATION_ID}
         />,
       )
 
@@ -208,6 +216,8 @@ describe('Logs', () => {
           pollOptions={{jwtToken: MOCKED_JWT_TOKEN, filters: EMPTY_FILTERS, cursor: MOCKED_CURSOR}}
           resubscribeCallback={vi.fn().mockResolvedValueOnce(MOCKED_JWT_TOKEN)}
           storeNameById={new Map()}
+          developerPlatformClient={testDeveloperPlatformClient()}
+          organizationId={MOCKED_ORGANIZATION_ID}
         />,
       )
 
@@ -261,6 +271,8 @@ describe('Logs', () => {
           pollOptions={{jwtToken: MOCKED_JWT_TOKEN, filters: EMPTY_FILTERS, cursor: MOCKED_CURSOR}}
           resubscribeCallback={vi.fn().mockResolvedValueOnce(MOCKED_JWT_TOKEN)}
           storeNameById={new Map()}
+          developerPlatformClient={testDeveloperPlatformClient()}
+          organizationId={MOCKED_ORGANIZATION_ID}
         />,
       )
 
@@ -321,6 +333,8 @@ describe('Logs', () => {
           pollOptions={{jwtToken: MOCKED_JWT_TOKEN, filters: EMPTY_FILTERS, cursor: MOCKED_CURSOR}}
           resubscribeCallback={vi.fn().mockResolvedValueOnce(MOCKED_JWT_TOKEN)}
           storeNameById={new Map()}
+          developerPlatformClient={testDeveloperPlatformClient()}
+          organizationId={MOCKED_ORGANIZATION_ID}
         />,
       )
 
@@ -382,6 +396,8 @@ describe('Logs', () => {
           pollOptions={{jwtToken: MOCKED_JWT_TOKEN, filters: EMPTY_FILTERS, cursor: MOCKED_CURSOR}}
           resubscribeCallback={vi.fn().mockResolvedValueOnce(MOCKED_JWT_TOKEN)}
           storeNameById={new Map()}
+          developerPlatformClient={testDeveloperPlatformClient()}
+          organizationId={MOCKED_ORGANIZATION_ID}
         />,
       )
 
@@ -430,6 +446,8 @@ describe('Logs', () => {
           pollOptions={{jwtToken: MOCKED_JWT_TOKEN, filters: EMPTY_FILTERS, cursor: MOCKED_CURSOR}}
           resubscribeCallback={vi.fn().mockResolvedValueOnce(MOCKED_JWT_TOKEN)}
           storeNameById={new Map()}
+          developerPlatformClient={testDeveloperPlatformClient()}
+          organizationId={MOCKED_ORGANIZATION_ID}
         />,
       )
 
@@ -477,6 +495,8 @@ describe('Logs', () => {
           pollOptions={{jwtToken: MOCKED_JWT_TOKEN, filters: EMPTY_FILTERS, cursor: MOCKED_CURSOR}}
           resubscribeCallback={vi.fn().mockResolvedValueOnce(MOCKED_JWT_TOKEN)}
           storeNameById={new Map()}
+          developerPlatformClient={testDeveloperPlatformClient()}
+          organizationId={MOCKED_ORGANIZATION_ID}
         />,
       )
 
@@ -512,6 +532,8 @@ describe('Logs', () => {
         pollOptions={{jwtToken: MOCKED_JWT_TOKEN, filters: EMPTY_FILTERS, cursor: MOCKED_CURSOR}}
         resubscribeCallback={mockedResubscribeCallback}
         storeNameById={new Map()}
+        developerPlatformClient={testDeveloperPlatformClient()}
+        organizationId={MOCKED_ORGANIZATION_ID}
       />,
     )
 

@@ -1,4 +1,4 @@
-import {getAvailableTCPPort} from './tcp.js'
+import {getAvailableTCPPort, checkPortAvailability} from './tcp.js'
 import * as system from './system.js'
 import {AbortError} from './error.js'
 import * as port from 'get-port-please'
@@ -55,5 +55,44 @@ describe('getAvailableTCPPort', () => {
 
     // Then
     expect(got).toBe(5)
+  })
+
+  test('reserves random ports and does not reuse them', async () => {
+    vi.mocked(port.checkPort).mockResolvedValue(false)
+    vi.mocked(port.getRandomPort).mockResolvedValueOnce(55).mockResolvedValueOnce(55).mockResolvedValueOnce(66)
+
+    let got = await getAvailableTCPPort(123)
+    expect(got).toBe(55)
+
+    got = await getAvailableTCPPort(123)
+    expect(got).toBe(66)
+  })
+})
+
+describe('checkPortAvailability', () => {
+  test('returns true when port is available', async () => {
+    // Given
+    const portNumber = 3000
+    vi.mocked(port.checkPort).mockResolvedValue(portNumber)
+
+    // When
+    const result = await checkPortAvailability(portNumber)
+
+    // Then
+    expect(result).toBe(true)
+    expect(port.checkPort).toHaveBeenCalledWith(portNumber, 'localhost')
+  })
+
+  test('returns false when port is not available', async () => {
+    // Given
+    const portNumber = 3000
+    vi.mocked(port.checkPort).mockResolvedValue(false)
+
+    // When
+    const result = await checkPortAvailability(portNumber)
+
+    // Then
+    expect(result).toBe(false)
+    expect(port.checkPort).toHaveBeenCalledWith(portNumber, 'localhost')
   })
 })

@@ -11,12 +11,12 @@ on:
       node-version:
         description: 'Node version'
         required: true
-        default: '18.20.3'
+        default: '24.1.0'
         type: choice
         options:
-          - 18.20.3
           - 20.14.0
           - 22.2.0
+          - 24.1.0
       os:
         description: 'Operating system'
         required: true
@@ -38,6 +38,7 @@ on:
   pull_request:
   merge_group:
 
+
 concurrency:
   group: shopify-cli-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -46,11 +47,11 @@ env:
   DEBUG: '1'
   SHOPIFY_CLI_ENV: development
   SHOPIFY_CONFIG: debug
-  PNPM_VERSION: '8.15.7'
+  PNPM_VERSION: '10.11.1'
   BUNDLE_WITHOUT: 'test:development'
   SHOPIFY_FLAG_CLIENT_ID: ${{ secrets.SHOPIFY_FLAG_CLIENT_ID }}
-  SHOPIFY_CLI_PARTNERS_TOKEN: ${{ secrets.SHOPIFY_CLI_PARTNERS_TOKEN }}
   GH_TOKEN: ${{ secrets.SHOPIFY_GH_READ_CONTENT_TOKEN }}
+  GH_TOKEN_SHOP: ${{ secrets.SHOP_GH_READ_CONTENT_TOKEN }}
 
 jobs:
   main:
@@ -60,8 +61,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: ['ubuntu-latest', 'windows-latest', 'macos-latest']
-        node: ['18.20.3', '20.14.0', '22.2.0']
+        os: [ 'ubuntu-latest', 'windows-latest', 'macos-latest' ]
+        node: [ '20.14.0', '22.2.0', '24.1.0' ]
     steps:
       - uses: actions/checkout@v3
         name: Checkout [${{ github.ref_name }}]
@@ -73,20 +74,25 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Build
         run: pnpm nx run-many --all --skip-nx-cache  --target=build --output-style=stream
-        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '18.20.3' }}
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '24.1.0' }}
       - name: Lint
         run: pnpm nx run-many --all --skip-nx-cache  --target=lint --output-style=stream
-        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '18.20.3' }}
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '24.1.0' }}
       - name: Type-check
         run: pnpm nx run-many --all --skip-nx-cache  --target=type-check --output-style=stream
-        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '18.20.3' }}
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '24.1.0' }}
       - name: Bundle
         run: pnpm nx run-many --all --skip-nx-cache  --target=bundle --output-style=stream
-        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '18.20.3' }}
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '24.1.0' }}
       - name: Unit tests
-        run: pnpm nx run-many --all --skip-nx-cache --target=test --exclude=features --output-style=stream
+        run: pnpm vitest run
+        env:
+          VITEST_MIN_THREADS: "1"
+          VITEST_MAX_THREADS: "4"
       - name: Acceptance tests
-        if: ${{ matrix.node == '18.20.3' }}
+        if: ${{ matrix.node == '24.1.0' }}
+        env:
+          SHOPIFY_CLI_PARTNERS_TOKEN: ${{ secrets.SHOPIFY_CLI_PARTNERS_TOKEN }}
         run: pnpm nx run features:test
       - name: Send Slack notification on failure
         uses: slackapi/slack-github-action@007b2c3c751a190b6f0f040e47ed024deaa72844 # pin@v1.23.0
@@ -100,7 +106,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       - name: Run and save test coverage
         uses: ./.github/actions/run-and-save-test-coverage
-        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '18.20.3' }}
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '24.1.0' }}
         with:
           branch-name: ${{ github.ref_name }}
 
@@ -111,9 +117,9 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: ['ubuntu-latest']
-        node: ['18.20.3']
-        target: ['build', 'type-check']
+        os: [ 'ubuntu-latest' ]
+        node: [ '24.1.0' ]
+        target: [ 'build', 'type-check' ]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -134,8 +140,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: ['ubuntu-latest']
-        node: ['18.20.3']
+        os: [ 'ubuntu-latest' ]
+        node: [ '24.1.0' ]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -162,8 +168,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: ['ubuntu-latest']
-        node: ['18.20.3']
+        os: [ 'ubuntu-latest' ]
+        node: [ '24.1.0' ]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -186,8 +192,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: ['ubuntu-latest']
-        node: ['18.20.3']
+        os: [ 'ubuntu-latest' ]
+        node: [ '24.1.0' ]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -199,7 +205,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Post the knip results
-        uses: codex-/knip-reporter@1ccefdf649b847793412fbfba286dc0b05defc1e # pin@v2
+        uses: codex-/knip-reporter@f717532b6707d95de06b9bb2eb8ece46393f018f # pin@v2
         with:
           verbose: true
 
@@ -210,8 +216,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: ['macos-latest'] # Codegen uses a find command that needs to work on CI and macOS; using the same env keeps this simple
-        node: ['18.20.3']
+        os: [ 'macos-latest' ] # Codegen uses a find command that needs to work on CI and macOS; using the same env keeps this simple
+        node: [ '24.1.0' ]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -226,6 +232,8 @@ jobs:
         run: pnpm graphql-codegen:get-graphql-schemas
       - name: Run graphql-codegen
         run: pnpm graphql-codegen
+      - name: Run git diff
+        run: git diff
       - name: Fail if any changes were made
         run: 'test -z "$(git status --porcelain)" || { echo -e "Run pnpm graphql-codegen when queries are changed, committing any fixes and generated files" ; exit 1; }'
 
@@ -243,7 +251,7 @@ jobs:
       - name: Setup deps
         uses: ./.github/actions/setup-cli-deps
         with:
-          node-version: 18.20.3
+          node-version: 24.1.0
       - name: Build
         run: pnpm build --output-style=stream
       - name: Refresh manifests
@@ -254,14 +262,14 @@ jobs:
         run: pnpm refresh-readme
       - name: Check if there are changes
         run: 'test -z "$(git status --porcelain "packages/cli/README.md" )" || { echo -e "Run pnpm refresh-readme before pushing new commands or flags. Diff here:\n\n$(git diff)" ; exit 1; }'
-      - name: Refresh documentation
-        run: pnpm refresh-documentation
+      - name: Refresh code documentation
+        run: pnpm refresh-code-documentation
       - name: Check if there are changes
-        run: 'test -z "$(git status --porcelain)" || { echo -e "Run pnpm refresh-documentation when you update functions with autogenerated examples. Diff here:\n\n$(git diff)" ; exit 1; }'
+        run: 'test -z "$(git status --porcelain)" || { echo -e "Run pnpm refresh-code-documentation when you update functions with autogenerated examples. Diff here:\n\n$(git diff)" ; exit 1; }'
       - name: Build shopify.dev docs
-        run: pnpm update-docs
+        run: pnpm build-dev-docs
       - name: Check if there are changes
-        run: 'test -z "$(git status --porcelain "docs-shopify.dev/generated/*.json" )" || { echo -e "Run (pnpm update-docs) before pushing new commands or flags." ; exit 1; }'
+        run: 'test -z "$(git status --porcelain "docs-shopify.dev/generated/*.json" )" || { echo -e "Run (pnpm build-dev-docs) before pushing new commands or flags." ; exit 1; }'
 
   pr-platform-dependent:
     name: '[PR] Test with Node ${{ matrix.node }} in ${{ matrix.os }}'
@@ -270,8 +278,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: ['ubuntu-latest', 'windows-latest', 'macos-latest']
-        node: ['18.20.3', '20.14.0', '22.2.0']
+        os: [ 'ubuntu-latest', 'windows-latest', 'macos-latest' ]
+        node: [ '20.14.0', '22.2.0', '24.1.0' ]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -283,7 +291,10 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Unit tests
-        run: pnpm test:unit --output-style=stream
+        run: pnpm vitest run
+        env:
+          VITEST_MIN_THREADS: "1"
+          VITEST_MAX_THREADS: "4"
 
   pr-acceptance-tests:
     name: '[PR] Accept. Test with Node ${{ matrix.node }} in ${{ matrix.os }}'
@@ -292,8 +303,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: ['ubuntu-latest', 'macos-latest', 'windows-latest']
-        node: ['18.20.3']
+        os: [ 'ubuntu-latest', 'macos-latest', 'windows-latest' ]
+        node: [ '24.1.0' ]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -305,6 +316,8 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Acceptance tests
+        env:
+          SHOPIFY_CLI_PARTNERS_TOKEN: ${{ secrets.SHOPIFY_CLI_PARTNERS_TOKEN }}
         run: pnpm test:features --output-style=stream
 
   pr-test-coverage:
@@ -314,8 +327,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: ['ubuntu-latest']
-        node: ['18.20.3']
+        os: [ 'ubuntu-latest' ]
+        node: [ '24.1.0' ]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -337,7 +350,6 @@ jobs:
         with:
           base-branch-name: '${{ github.base_ref }}'
 
-
   manually-triggered:
     name: '[Manual] Test with Node ${{ inputs.node-version }} in ${{ inputs.os }}'
     runs-on: ${{ inputs.os }}
@@ -355,9 +367,11 @@ jobs:
       - name: Unit tests
         run: pnpm test:unit --output-style=stream
       - name: Acceptance tests
+        env:
+          SHOPIFY_CLI_PARTNERS_TOKEN: ${{ secrets.SHOPIFY_CLI_PARTNERS_TOKEN }}
         run: pnpm test:features --output-style=stream
       - name: Setup tmate session
         if: ${{ failure() && inputs.debug-enabled }}
-        uses: mxschmitt/action-tmate@1005f9c9db5f1b055a495e72c6e589764984baf6 # pin@v3
+        uses: mxschmitt/action-tmate@e5c7151931ca95bad1c6f4190c730ecf8c7dde48 # pin@v3
         with:
           limit-access-to-actor: true

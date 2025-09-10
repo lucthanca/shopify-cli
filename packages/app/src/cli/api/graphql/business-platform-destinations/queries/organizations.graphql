@@ -1,7 +1,7 @@
 query ListOrganizations {
   currentUserAccount {
     uuid
-    organizations {
+    organizationsWithAccessToDestination(destination: APPS_CLI) {
       nodes {
         id
         name

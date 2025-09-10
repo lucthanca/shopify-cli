@@ -28,8 +28,6 @@ export const environmentVariables = {
   themeToken: 'SHOPIFY_CLI_THEME_TOKEN',
   unitTest: 'SHOPIFY_UNIT_TEST',
   verbose: 'SHOPIFY_FLAG_VERBOSE',
-  noThemeBundling: 'SHOPIFY_CLI_NO_THEME_BUNDLING',
-  bundledThemeCLI: 'SHOPIFY_CLI_BUNDLED_THEME_CLI',
   // Variables to detect if the CLI is running in a cloud environment
   codespaces: 'CODESPACES',
   codespaceName: 'CODESPACE_NAME',
@@ -45,7 +43,9 @@ export const environmentVariables = {
   otelURL: 'SHOPIFY_CLI_OTEL_EXPORTER_OTLP_ENDPOINT',
   themeKitAccessDomain: 'SHOPIFY_CLI_THEME_KIT_ACCESS_DOMAIN',
   json: 'SHOPIFY_FLAG_JSON',
-  useAppManagement: 'USE_APP_MANAGEMENT_API',
+  neverUsePartnersApi: 'SHOPIFY_CLI_NEVER_USE_PARTNERS_API',
+  skipNetworkLevelRetry: 'SHOPIFY_CLI_SKIP_NETWORK_LEVEL_RETRY',
+  maxRequestTimeForNetworkCalls: 'SHOPIFY_CLI_MAX_REQUEST_TIME_FOR_NETWORK_CALLS',
 }
 
 export const defaultThemeKitAccessDomain = 'theme-kit-access.shopifyapps.com'

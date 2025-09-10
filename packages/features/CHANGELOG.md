@@ -1,5 +1,18 @@
 # @shopify/features
 
+## 0.14.0
+
+### Minor Changes
+
+- 521fb07: Add new `theme duplicate` command to duplicate store themes
+
+## 0.13.0
+
+### Minor Changes
+
+- 24aa2dd: Drop support for Node 18
+- ce3dfdc: Print all log messages to stderr instead of stdout
+
 ## 0.12.0
 
 ### Minor Changes

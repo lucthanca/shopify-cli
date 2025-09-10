@@ -2,9 +2,10 @@
 <!-- commands -->
 * [`shopify app build`](#shopify-app-build)
 * [`shopify app config link`](#shopify-app-config-link)
-* [`shopify app config use [CONFIG]`](#shopify-app-config-use-config)
+* [`shopify app config use [config] [flags]`](#shopify-app-config-use-config-flags)
 * [`shopify app deploy`](#shopify-app-deploy)
 * [`shopify app dev`](#shopify-app-dev)
+* [`shopify app dev clean`](#shopify-app-dev-clean)
 * [`shopify app env pull`](#shopify-app-env-pull)
 * [`shopify app env show`](#shopify-app-env-show)
 * [`shopify app function build`](#shopify-app-function-build)
@@ -12,21 +13,21 @@
 * [`shopify app function run`](#shopify-app-function-run)
 * [`shopify app function schema`](#shopify-app-function-schema)
 * [`shopify app function typegen`](#shopify-app-function-typegen)
-* [`shopify app generate extension [FILE]`](#shopify-app-generate-extension-file)
+* [`shopify app generate extension`](#shopify-app-generate-extension)
 * [`shopify app import-extensions`](#shopify-app-import-extensions)
 * [`shopify app info`](#shopify-app-info)
 * [`shopify app init`](#shopify-app-init)
 * [`shopify app logs`](#shopify-app-logs)
 * [`shopify app logs sources`](#shopify-app-logs-sources)
-* [`shopify app:release --version <version>`](#shopify-apprelease---version-version)
-* [`shopify app versions list [FILE]`](#shopify-app-versions-list-file)
+* [`shopify app release --version <version>`](#shopify-app-release---version-version)
+* [`shopify app versions list`](#shopify-app-versions-list)
 * [`shopify app webhook trigger`](#shopify-app-webhook-trigger)
 * [`shopify auth logout`](#shopify-auth-logout)
 * [`shopify commands`](#shopify-commands)
 * [`shopify config autocorrect off`](#shopify-config-autocorrect-off)
 * [`shopify config autocorrect on`](#shopify-config-autocorrect-on)
 * [`shopify config autocorrect status`](#shopify-config-autocorrect-status)
-* [`shopify help [COMMAND]`](#shopify-help-command)
+* [`shopify help [command] [flags]`](#shopify-help-command-flags)
 * [`shopify hydrogen build`](#shopify-hydrogen-build)
 * [`shopify hydrogen check RESOURCE`](#shopify-hydrogen-check-resource)
 * [`shopify hydrogen codegen`](#shopify-hydrogen-codegen)
@@ -61,17 +62,20 @@
 * [`shopify plugins uninstall [PLUGIN]`](#shopify-plugins-uninstall-plugin)
 * [`shopify plugins unlink [PLUGIN]`](#shopify-plugins-unlink-plugin)
 * [`shopify plugins update`](#shopify-plugins-update)
-* [`shopify search [QUERY]`](#shopify-search-query)
+* [`shopify search [query]`](#shopify-search-query)
 * [`shopify theme check`](#shopify-theme-check)
 * [`shopify theme console`](#shopify-theme-console)
 * [`shopify theme delete`](#shopify-theme-delete)
 * [`shopify theme dev`](#shopify-theme-dev)
+* [`shopify theme duplicate`](#shopify-theme-duplicate)
 * [`shopify theme info`](#shopify-theme-info)
-* [`shopify theme init [name]`](#shopify-theme-init-name)
+* [`shopify theme init [name] [flags]`](#shopify-theme-init-name-flags)
 * [`shopify theme language-server`](#shopify-theme-language-server)
 * [`shopify theme list`](#shopify-theme-list)
+* [`shopify theme metafields pull`](#shopify-theme-metafields-pull)
 * [`shopify theme open`](#shopify-theme-open)
 * [`shopify theme package`](#shopify-theme-package)
+* [`shopify theme profile`](#shopify-theme-profile)
 * [`shopify theme publish`](#shopify-theme-publish)
 * [`shopify theme pull`](#shopify-theme-pull)
 * [`shopify theme push`](#shopify-theme-push)
@@ -136,13 +140,13 @@ DESCRIPTION
   (https://shopify.dev/docs/apps/tools/cli/configuration) page.
 ```
 
-## `shopify app config use [CONFIG]`
+## `shopify app config use [config] [flags]`
 
 Activate an app configuration.
 
 ```
 USAGE
-  $ shopify app config use [CONFIG] [--client-id <value> | ] [--no-color] [--path <value>] [--reset | ] [--verbose]
+  $ shopify app config use [config] [flags]
 
 ARGUMENTS
   CONFIG  The name of the app configuration. Can be 'shopify.app.staging.toml' or simply 'staging'.
@@ -167,8 +171,8 @@ Deploy your Shopify app.
 
 ```
 USAGE
-  $ shopify app deploy [--client-id <value> | -c <value>] [-f] [--message <value>] [--no-color] [--no-release]
-    [--path <value>] [--reset | ] [--source-control-url <value>] [--verbose] [--version <value>]
+  $ shopify app deploy [--client-id <value> | -c <value>] [-f] [--message <value>] [--no-build] [--no-color]
+    [--no-release] [--path <value>] [--reset | ] [--source-control-url <value>] [--verbose] [--version <value>]
 
 FLAGS
   -c, --config=<value>              The name of the app configuration.
@@ -176,6 +180,9 @@ FLAGS
       --client-id=<value>           The Client ID of your app.
       --message=<value>             Optional message that will be associated with this version. This is for internal use
                                     only and won't be available externally.
+      --no-build                    Use with caution: Skips building any elements of the app that require building. You
+                                    should ensure your app has been prepared in advance, such as by running `shopify app
+                                    build` or by caching build artifacts.
       --no-color                    Disable color output.
       --no-release                  Creates a version but doesn't release it - it's not made available to merchants.
       --path=<value>                The path to your app directory.
@@ -204,10 +211,10 @@ Run the app.
 
 ```
 USAGE
-  $ shopify app dev [--checkout-cart-url <value>] [--client-id <value> | -c <value>] [--no-color]
-    [--no-update] [--notify <value>] [--path <value>] [--reset | ] [--skip-dependencies-installation] [-s <value>]
-    [--subscription-product-url <value>] [-t <value>] [--theme-app-extension-port <value>] [--tunnel-url <value> |  | ]
-    [--verbose]
+  $ shopify app dev [--checkout-cart-url <value>] [--client-id <value> | -c <value>] [--localhost-port
+    <value>] [--no-color] [--no-update] [--notify <value>] [--path <value>] [--reset | ]
+    [--skip-dependencies-installation] [-s <value>] [--subscription-product-url <value>] [-t <value>]
+    [--theme-app-extension-port <value>] [--use-localhost | [--tunnel-url <value> | ]] [--verbose]
 
 FLAGS
   -c, --config=<value>                    The name of the app configuration.
@@ -216,6 +223,7 @@ FLAGS
       --checkout-cart-url=<value>         Resource URL for checkout UI extension. Format:
                                           "/cart/{productVariantID}:{productQuantity}"
       --client-id=<value>                 The Client ID of your app.
+      --localhost-port=<value>            Port to use for localhost.
       --no-color                          Disable color output.
       --no-update                         Skips the Partners Dashboard URL update step.
       --notify=<value>                    The file path or URL. The file path is to a file that you want updated on
@@ -228,6 +236,9 @@ FLAGS
       --theme-app-extension-port=<value>  Local port of the theme app extension development server.
       --tunnel-url=<value>                Use a custom tunnel, it must be running before executing dev. Format:
                                           "https://my-tunnel-url:port".
+      --use-localhost                     Service entry point will listen to localhost. A tunnel won't be used. Will
+                                          work for testing many app features, but not those that directly invoke your
+                                          app (E.g: Webhooks)
       --verbose                           Increase the verbosity of the output.
 
 DESCRIPTION
@@ -270,6 +281,32 @@ DESCRIPTION
   a "staff account" (https://help.shopify.com/manual/your-account/staff-accounts) on the store. Staff accounts are
   created automatically the first time you access a development store with your Partner staff account through the
   Partner Dashboard.
+```
+
+## `shopify app dev clean`
+
+Cleans up the app preview from the selected store.
+
+```
+USAGE
+  $ shopify app dev clean [--client-id <value> | -c <value>] [--no-color] [--path <value>] [--reset | ] [-s
+    <value>] [--verbose]
+
+FLAGS
+  -c, --config=<value>     The name of the app configuration.
+  -s, --store=<value>      Store URL. Must be an existing development store.
+      --client-id=<value>  The Client ID of your app.
+      --no-color           Disable color output.
+      --path=<value>       The path to your app directory.
+      --reset              Reset all your settings.
+      --verbose            Increase the verbosity of the output.
+
+DESCRIPTION
+  Cleans up the app preview from the selected store.
+
+  Stop the app preview that was started with `shopify app dev`.
+
+  It restores the app's active version to the selected development store.
 ```
 
 ## `shopify app env pull`
@@ -452,13 +489,13 @@ DESCRIPTION
   function written in JavaScript.
 ```
 
-## `shopify app generate extension [FILE]`
+## `shopify app generate extension`
 
 Generate a new app Extension.
 
 ```
 USAGE
-  $ shopify app generate extension [FILE] [--client-id <value> | -c <value>] [--flavor
+  $ shopify app generate extension [--client-id <value> | -c <value>] [--flavor
     vanilla-js|react|typescript|typescript-react|wasm|rust] [-n <value>] [--no-color] [--path <value>] [--reset | ] [-t
     <value>] [-t <value>] [--verbose]
 
@@ -484,10 +521,6 @@ DESCRIPTION
 
   Each new app extension is created in a folder under `extensions/`. To learn more about the extensions file structure,
   refer to "App structure" (https://shopify.dev/docs/apps/tools/cli/structure) and the documentation for your extension.
-
-
-EXAMPLES
-  $ shopify app generate extension
 ```
 
 ## `shopify app import-extensions`
@@ -574,7 +607,7 @@ Stream detailed logs for your Shopify app.
 ```
 USAGE
   $ shopify app logs [--client-id <value> | -c <value>] [-j] [--no-color] [--path <value>] [--reset | ]
-    [--source <value>] [--status success|failure] [-s <value>] [--verbose]
+    [--source <value>...] [--status success|failure] [-s <value>...] [--verbose]
 
 FLAGS
   -c, --config=<value>     The name of the app configuration.
@@ -625,7 +658,7 @@ DESCRIPTION
   only function extensions are supported as sources.
 ```
 
-## `shopify app:release --version <version>`
+## `shopify app release --version <version>`
 
 Release an app version.
 
@@ -649,13 +682,13 @@ DESCRIPTION
   Releases an existing app version. Pass the name of the version that you want to release using the `--version` flag.
 ```
 
-## `shopify app versions list [FILE]`
+## `shopify app versions list`
 
 List deployed versions of your app.
 
 ```
 USAGE
-  $ shopify app versions list [FILE] [--client-id <value> | -c <value>] [-j] [--no-color] [--path <value>] [--reset | ]
+  $ shopify app versions list [--client-id <value> | -c <value>] [-j] [--no-color] [--path <value>] [--reset | ]
     [--verbose]
 
 FLAGS
@@ -671,9 +704,6 @@ DESCRIPTION
   List deployed versions of your app.
 
   Lists the deployed app versions. An app version is a snapshot of your app extensions.
-
-EXAMPLES
-  $ shopify app versions list
 ```
 
 ## `shopify app webhook trigger`
@@ -769,33 +799,29 @@ DESCRIPTION
 
 ## `shopify commands`
 
-list all the commands
+List all shopify commands.
 
 ```
 USAGE
-  $ shopify commands [--columns <value> | -x] [--deprecated] [--filter <value>] [-h] [--hidden] [--json]
-    [--no-header | [--csv | --no-truncate]] [--output csv|json|yaml |  | ] [--sort <value>] [--tree]
+  $ shopify commands [-c id|plugin|summary|type... | --tree] [--deprecated] [-x | ] [--hidden] [--json]
+    [--no-truncate | ] [--sort id|plugin|summary|type | ]
 
 FLAGS
-  -h, --help             Show CLI help.
-  -x, --extended         show extra columns
-      --columns=<value>  only show provided columns (comma-separated)
-      --csv              output is csv format [alias: --output=csv]
-      --deprecated       show deprecated commands
-      --filter=<value>   filter property by partial string matching, ex: name=foo
-      --hidden           show hidden commands
-      --no-header        hide table header from output
-      --no-truncate      do not truncate output to fit screen
-      --output=<option>  output in a more machine friendly format
-                         <options: csv|json|yaml>
-      --sort=<value>     property to sort by (prepend '-' for descending)
-      --tree             show tree of commands
+  -c, --columns=<option>...  Only show provided columns (comma-separated).
+                             <options: id|plugin|summary|type>
+  -x, --extended             Show extra columns.
+      --deprecated           Show deprecated commands.
+      --hidden               Show hidden commands.
+      --no-truncate          Do not truncate output.
+      --sort=<option>        [default: id] Property to sort by.
+                             <options: id|plugin|summary|type>
+      --tree                 Show tree of commands.
 
 GLOBAL FLAGS
   --json  Format output as json.
 
 DESCRIPTION
-  list all the commands
+  List all shopify commands.
 ```
 
 ## `shopify config autocorrect off`
@@ -855,13 +881,13 @@ DESCRIPTION
   When autocorrection is disabled, you need to confirm that you want to run corrections for mistyped commands.
 ```
 
-## `shopify help [COMMAND]`
+## `shopify help [command] [flags]`
 
 Display help for Shopify CLI
 
 ```
 USAGE
-  $ shopify help [COMMAND...] [-n]
+  $ shopify help [command] [flags]
 
 ARGUMENTS
   COMMAND...  Command to show help for.
@@ -1042,8 +1068,7 @@ Runs Hydrogen storefront in an Oxygen worker for development.
 USAGE
   $ shopify hydrogen dev [--codegen-config-path <value> --codegen] [--debug] [--disable-deps-optimizer]
     [--disable-version-check] [--disable-virtual-routes] [--entry <value>] [--env <value> | --env-branch <value>]
-    [--env-file <value>] [--host] [--inspector-port <value>] [--legacy-runtime] [--path <value>] [--port <value>]
-    [--sourcemap] [--verbose]
+    [--env-file <value>] [--host] [--inspector-port <value>] [--path <value>] [--port <value>] [--verbose]
 
 FLAGS
   --codegen                      Automatically generates GraphQL types for your project’s Storefront API queries.
@@ -1062,12 +1087,9 @@ FLAGS
                                  Defaults to the '.env' located in your project path `--path`.
   --host                         Expose the server to the local network
   --inspector-port=<value>       The port where the inspector is available. Defaults to 9229.
-  --legacy-runtime               [Classic Remix Compiler] Runs the app in a Node.js sandbox instead of an Oxygen worker.
   --path=<value>                 The path to the directory of the Hydrogen storefront. Defaults to the current directory
                                  where the command is run.
   --port=<value>                 The port to run the server on. Defaults to 3000.
-  --[no-]sourcemap               [Classic Remix Compiler] Controls whether server sourcemaps are generated. Default to
-                                 `true`. Deactivate `--no-sourcemaps`.
   --verbose                      Outputs more information about the command's execution.
 
 DESCRIPTION
@@ -1142,8 +1164,9 @@ USAGE
     [--typescript]
 
 ARGUMENTS
-  ROUTENAME  (home|page|cart|products|collections|policies|blogs|account|search|robots|sitemap|all) The route to
-             generate. One of home,page,cart,products,collections,policies,blogs,account,search,robots,sitemap,all.
+  ROUTENAME  (home|page|cart|products|collections|policies|blogs|account|search|robots|sitemap|tokenlessApi|all) The
+             route to generate. One of
+             home,page,cart,products,collections,policies,blogs,account,search,robots,sitemap,tokenlessApi,all.
 
 FLAGS
   -f, --force                 Overwrites the destination directory and files if they already exist.
@@ -1286,8 +1309,8 @@ Runs a Hydrogen storefront in an Oxygen worker for production.
 ```
 USAGE
   $ shopify hydrogen preview [--codegen-config-path <value> [--codegen --build]] [--debug] [--entry <value> ] [--env
-    <value> | --env-branch <value>] [--env-file <value>] [--inspector-port <value>] [--legacy-runtime] [--path <value>]
-    [--port <value>] [--verbose] [--watch ]
+    <value> | --env-branch <value>] [--env-file <value>] [--inspector-port <value>] [--path <value>] [--port <value>]
+    [--verbose] [--watch ]
 
 FLAGS
   --build                        Builds the app before starting the preview server.
@@ -1303,7 +1326,6 @@ FLAGS
   --env-file=<value>             [default: .env] Path to an environment file to override existing environment variables.
                                  Defaults to the '.env' located in your project path `--path`.
   --inspector-port=<value>       The port where the inspector is available. Defaults to 9229.
-  --legacy-runtime               Runs the app in a Node.js sandbox instead of an Oxygen worker.
   --path=<value>                 The path to the directory of the Hydrogen storefront. Defaults to the current directory
                                  where the command is run.
   --port=<value>                 The port to run the server on. Defaults to 3000.
@@ -1557,6 +1579,7 @@ FLAGS
 
 DESCRIPTION
   Links a plugin into the CLI for development.
+
   Installation of a linked plugin will override a user-installed or core plugin.
 
   e.g. If you have a user-installed or core plugin that has a 'hello' command, installing a linked plugin with a 'hello'
@@ -1674,13 +1697,13 @@ DESCRIPTION
   Update installed plugins.
 ```
 
-## `shopify search [QUERY]`
+## `shopify search [query]`
 
 Starts a search on shopify.dev.
 
 ```
 USAGE
-  $ shopify search [QUERY]
+  $ shopify search [query]
 
 DESCRIPTION
   Starts a search on shopify.dev.
@@ -1700,27 +1723,28 @@ Validate the theme.
 
 ```
 USAGE
-  $ shopify theme check [-a] [-C <value>] [-e <value>] [--fail-level crash|error|suggestion|style|warning|info]
-    [--init] [--list] [--no-color] [-o text|json] [--path <value>] [--print] [--verbose] [-v]
+  $ shopify theme check [-a] [-C <value>] [-e <value>...] [--fail-level
+    crash|error|suggestion|style|warning|info] [--init] [--list] [--no-color] [-o text|json] [--path <value>] [--print]
+    [--verbose] [-v]
 
 FLAGS
-  -C, --config=<value>       Use the config provided, overriding .theme-check.yml if present
-                             Supports all theme-check: config values, e.g., theme-check:theme-app-extension,
-                             theme-check:recommended, theme-check:all
-                             For backwards compatibility, :theme_app_extension is also supported
-  -a, --auto-correct         Automatically fix offenses
-  -e, --environment=<value>  The environment to apply to the current command.
-  -o, --output=<option>      [default: text] The output format to use
-                             <options: text|json>
-  -v, --version              Print Theme Check version
-      --fail-level=<option>  [default: error] Minimum severity for exit with error code
-                             <options: crash|error|suggestion|style|warning|info>
-      --init                 Generate a .theme-check.yml file
-      --list                 List enabled checks
-      --no-color             Disable color output.
-      --path=<value>         The path to your theme directory.
-      --print                Output active config to STDOUT
-      --verbose              Increase the verbosity of the output.
+  -C, --config=<value>          Use the config provided, overriding .theme-check.yml if present
+                                Supports all theme-check: config values, e.g., theme-check:theme-app-extension,
+                                theme-check:recommended, theme-check:all
+                                For backwards compatibility, :theme_app_extension is also supported
+  -a, --auto-correct            Automatically fix offenses
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -o, --output=<option>         [default: text] The output format to use
+                                <options: text|json>
+  -v, --version                 Print Theme Check version
+      --fail-level=<option>     [default: error] Minimum severity for exit with error code
+                                <options: crash|error|suggestion|style|warning|info>
+      --init                    Generate a .theme-check.yml file
+      --list                    List enabled checks
+      --no-color                Disable color output.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --print                   Output active config to STDOUT
+      --verbose                 Increase the verbosity of the output.
 
 DESCRIPTION
   Validate the theme.
@@ -1740,11 +1764,12 @@ USAGE
   $ shopify theme console --url /products/classic-leather-jacket
 
 FLAGS
-  -e, --environment=<value>     The environment to apply to the current command.
+  -e, --environment=<value>...  The environment to apply to the current command.
   -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
                                 (example.myshopify.com, https://example.myshopify.com).
       --no-color                Disable color output.
       --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
       --store-password=<value>  The password for storefronts with password protection.
       --url=<value>             [default: /] The url to be used as context
       --verbose                 Increase the verbosity of the output.
@@ -1764,20 +1789,21 @@ Delete remote themes from the connected store. This command can't be undone.
 
 ```
 USAGE
-  $ shopify theme delete [-d] [-e <value>] [-f] [--no-color] [--password <value>] [-a] [-s <value>] [-t <value>]
-    [--verbose]
+  $ shopify theme delete [-d] [-e <value>...] [-f] [--no-color] [--password <value>] [--path <value>] [-a] [-s
+    <value>] [-t <value>...] [--verbose]
 
 FLAGS
-  -a, --show-all             Include others development themes in theme list.
-  -d, --development          Delete your development theme.
-  -e, --environment=<value>  The environment to apply to the current command.
-  -f, --force                Skip confirmation.
-  -s, --store=<value>        Store URL. It can be the store prefix (example) or the full myshopify.com URL
-                             (example.myshopify.com, https://example.myshopify.com).
-  -t, --theme=<value>...     Theme ID or name of the remote theme.
-      --no-color             Disable color output.
-      --password=<value>     Password generated from the Theme Access app.
-      --verbose              Increase the verbosity of the output.
+  -a, --show-all                Include others development themes in theme list.
+  -d, --development             Delete your development theme.
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -f, --force                   Skip confirmation.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+  -t, --theme=<value>...        Theme ID or name of the remote theme.
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --verbose                 Increase the verbosity of the output.
 
 DESCRIPTION
   Delete remote themes from the connected store. This command can't be undone.
@@ -1797,12 +1823,13 @@ Uploads the current theme as a development theme to the connected store, then pr
 
 ```
 USAGE
-  $ shopify theme dev [-e <value>] [--host <value>] [-x <value>] [--live-reload hot-reload|full-page|off]
-    [--no-color] [-n] [--notify <value>] [-o <value>] [--open] [--password <value>] [--path <value>] [--port <value>]
-    [-s <value>] [--store-password <value>] [-t <value>] [--theme-editor-sync] [--verbose]
+  $ shopify theme dev [-e <value>...] [--error-overlay silent|default] [--host <value>] [-x <value>...]
+    [--live-reload hot-reload|full-page|off] [--no-color] [-n] [--notify <value>] [-o <value>...] [--open] [--password
+    <value>] [--path <value>] [--port <value>] [-s <value>] [--store-password <value>] [-t <value>]
+    [--theme-editor-sync] [--verbose]
 
 FLAGS
-  -e, --environment=<value>
+  -e, --environment=<value>...
       The environment to apply to the current command.
 
   -n, --nodelete
@@ -1821,6 +1848,13 @@ FLAGS
 
   -x, --ignore=<value>...
       Skip hot reloading any files that match the specified pattern.
+
+  --error-overlay=<option>
+      [default: default] Controls the visibility of the error overlay when an theme asset upload fails:
+      - silent Prevents the error overlay from appearing.
+      - default Displays the error overlay.
+
+      <options: silent|default>
 
   --host=<value>
       Set which network interface the web server listens on. The default value is 127.0.0.1.
@@ -1846,7 +1880,7 @@ FLAGS
       Password generated from the Theme Access app.
 
   --path=<value>
-      The path to your theme directory.
+      The path where you want to run the command. Defaults to the current working directory.
 
   --port=<value>
       Local port to serve theme preview from.
@@ -1895,48 +1929,108 @@ DESCRIPTION
   (https://shopify.dev/docs/themes/tools/cli#directory-structure).
 ```
 
+## `shopify theme duplicate`
+
+Duplicates a theme from your theme library.
+
+```
+USAGE
+  $ shopify theme duplicate
+  $ shopify theme duplicate --theme 10 --name 'New Theme'
+
+FLAGS
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -f, --force                   Force the duplicate operation to run without prompts or confirmations.
+  -j, --json                    Output the result as JSON.
+  -n, --name=<value>            Name of the newly duplicated theme.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+  -t, --theme=<value>           Theme ID or name of the remote theme.
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --verbose                 Increase the verbosity of the output.
+
+DESCRIPTION
+  Duplicates a theme from your theme library.
+
+  If you want to duplicate your local theme, you need to run `shopify theme push` first.
+
+  If no theme ID is specified, you're prompted to select the theme that you want to duplicate from the list of themes in
+  your store. You're asked to confirm that you want to duplicate the specified theme.
+
+  Prompts and confirmations are not shown when duplicate is run in a CI environment or the `--force` flag is used,
+  therefore you must specify a theme ID using the `--theme` flag.
+
+  You can optionally name the duplicated theme using the `--name` flag.
+
+  If you use the `--json` flag, then theme information is returned in JSON format, which can be used as a
+  machine-readable input for scripts or continuous integration.
+
+  Sample JSON output:
+
+  ```json
+  {
+  "theme": {
+  "id": 108267175958,
+  "name": "A Duplicated Theme",
+  "role": "unpublished",
+  "shop": "mystore.myshopify.com"
+  }
+  }
+  ```
+
+  ```json
+  {
+  "message": "The theme 'Summer Edition' could not be duplicated due to errors",
+  "errors": ["Maximum number of themes reached"],
+  "requestId": "12345-abcde-67890"
+  }
+  ```
+```
+
 ## `shopify theme info`
 
 Displays information about your theme environment, including your current store. Can also retrieve information about a specific theme.
 
 ```
 USAGE
-  $ shopify theme info [-d] [-e <value>] [-j] [--no-color] [--password <value>] [-s <value>] [-t <value>]
-    [--verbose]
+  $ shopify theme info [-d] [-e <value>...] [-j] [--no-color] [--password <value>] [--path <value>] [-s <value>]
+    [-t <value>] [--verbose]
 
 FLAGS
-  -d, --development          Retrieve info from your development theme.
-  -e, --environment=<value>  The environment to apply to the current command.
-  -j, --json                 Output the result as JSON.
-  -s, --store=<value>        Store URL. It can be the store prefix (example) or the full myshopify.com URL
-                             (example.myshopify.com, https://example.myshopify.com).
-  -t, --theme=<value>        Theme ID or name of the remote theme.
-      --no-color             Disable color output.
-      --password=<value>     Password generated from the Theme Access app.
-      --verbose              Increase the verbosity of the output.
+  -d, --development             Retrieve info from your development theme.
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -j, --json                    Output the result as JSON.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+  -t, --theme=<value>           Theme ID or name of the remote theme.
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --verbose                 Increase the verbosity of the output.
 
 DESCRIPTION
   Displays information about your theme environment, including your current store. Can also retrieve information about a
   specific theme.
 ```
 
-## `shopify theme init [name]`
+## `shopify theme init [name] [flags]`
 
 Clones a Git repository to use as a starting point for building a new theme.
 
 ```
 USAGE
-  $ shopify theme init [name]
+  $ shopify theme init [name] [flags]
 
 ARGUMENTS
   NAME  Name of the new theme
 
 FLAGS
   -l, --latest             Downloads the latest release of the `clone-url`
-  -u, --clone-url=<value>  [default: https://github.com/Shopify/dawn.git] The Git URL to clone from. Defaults to
-                           Shopify's example theme, Dawn: https://github.com/Shopify/dawn.git
+  -u, --clone-url=<value>  [default: https://github.com/Shopify/skeleton-theme.git] The Git URL to clone from. Defaults
+                           to Shopify's Skeleton theme.
       --no-color           Disable color output.
-      --path=<value>       The path to your theme directory.
+      --path=<value>       The path where you want to run the command. Defaults to the current working directory.
       --verbose            Increase the verbosity of the output.
 
 DESCRIPTION
@@ -1944,14 +2038,13 @@ DESCRIPTION
 
   Clones a Git repository to your local machine to use as the starting point for building a theme.
 
-  If no Git repository is specified, then this command creates a copy of "Dawn" (https://github.com/Shopify/dawn),
-  Shopify's example theme, with the specified name in the current folder. If no name is provided, then you're prompted
-  to enter one.
+  If no Git repository is specified, then this command creates a copy of Shopify's "Skeleton theme"
+  (https://github.com/Shopify/skeleton-theme.git), with the specified name in the current folder. If no name is
+  provided, then you're prompted to enter one.
 
-  > Caution: If you're building a theme for the Shopify Theme Store, then you can use Dawn as a starting point. However,
-  the theme that you submit needs to be "substantively different from Dawn"
-  (https://shopify.dev/docs/themes/store/requirements#uniqueness) so that it provides added value for users. Learn about
-  the "ways that you can use Dawn" (https://shopify.dev/docs/themes/tools/dawn#ways-to-use-dawn).
+  > Caution: If you're building a theme for the Shopify Theme Store, then you can use our example theme as a starting
+  point. However, the theme that you submit needs to be "substantively different from existing themes"
+  (https://shopify.dev/docs/themes/store/requirements#uniqueness) so that it provides added value for users.
 ```
 
 ## `shopify theme language-server`
@@ -1978,24 +2071,51 @@ Lists the themes in your store, along with their IDs and statuses.
 
 ```
 USAGE
-  $ shopify theme list [-e <value>] [--id <value>] [-j] [--name <value>] [--no-color] [--password <value>]
-    [--role live|unpublished|development] [-s <value>] [--verbose]
+  $ shopify theme list [-e <value>...] [--id <value>] [-j] [--name <value>] [--no-color] [--password <value>]
+    [--path <value>] [--role live|unpublished|development] [-s <value>] [--verbose]
 
 FLAGS
-  -e, --environment=<value>  The environment to apply to the current command.
-  -j, --json                 Output the result as JSON.
-  -s, --store=<value>        Store URL. It can be the store prefix (example) or the full myshopify.com URL
-                             (example.myshopify.com, https://example.myshopify.com).
-      --id=<value>           Only list theme with the given ID.
-      --name=<value>         Only list themes that contain the given name.
-      --no-color             Disable color output.
-      --password=<value>     Password generated from the Theme Access app.
-      --role=<option>        Only list themes with the given role.
-                             <options: live|unpublished|development>
-      --verbose              Increase the verbosity of the output.
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -j, --json                    Output the result as JSON.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+      --id=<value>              Only list theme with the given ID.
+      --name=<value>            Only list themes that contain the given name.
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --role=<option>           Only list themes with the given role.
+                                <options: live|unpublished|development>
+      --verbose                 Increase the verbosity of the output.
 
 DESCRIPTION
   Lists the themes in your store, along with their IDs and statuses.
+```
+
+## `shopify theme metafields pull`
+
+Download metafields definitions from your shop into a local file.
+
+```
+USAGE
+  $ shopify theme metafields pull [-e <value>...] [--no-color] [--password <value>] [--path <value>] [-s <value>]
+    [--verbose]
+
+FLAGS
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --verbose                 Increase the verbosity of the output.
+
+DESCRIPTION
+  Download metafields definitions from your shop into a local file.
+
+  Retrieves metafields from Shopify Admin.
+
+  If the metafields file already exists, it will be overwritten.
 ```
 
 ## `shopify theme open`
@@ -2004,20 +2124,21 @@ Opens the preview of your remote theme.
 
 ```
 USAGE
-  $ shopify theme open [-d] [-E] [-e <value>] [-l] [--no-color] [--password <value>] [-s <value>] [-t <value>]
-    [--verbose]
+  $ shopify theme open [-d] [-E] [-e <value>...] [-l] [--no-color] [--password <value>] [--path <value>] [-s
+    <value>] [-t <value>] [--verbose]
 
 FLAGS
-  -E, --editor               Open the theme editor for the specified theme in the browser.
-  -d, --development          Open your development theme.
-  -e, --environment=<value>  The environment to apply to the current command.
-  -l, --live                 Open your live (published) theme.
-  -s, --store=<value>        Store URL. It can be the store prefix (example) or the full myshopify.com URL
-                             (example.myshopify.com, https://example.myshopify.com).
-  -t, --theme=<value>        Theme ID or name of the remote theme.
-      --no-color             Disable color output.
-      --password=<value>     Password generated from the Theme Access app.
-      --verbose              Increase the verbosity of the output.
+  -E, --editor                  Open the theme editor for the specified theme in the browser.
+  -d, --development             Open your development theme.
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -l, --live                    Open your live (published) theme.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+  -t, --theme=<value>           Theme ID or name of the remote theme.
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --verbose                 Increase the verbosity of the output.
 
 DESCRIPTION
   Opens the preview of your remote theme.
@@ -2043,7 +2164,7 @@ USAGE
 
 FLAGS
   --no-color      Disable color output.
-  --path=<value>  The path to your theme directory.
+  --path=<value>  The path where you want to run the command. Defaults to the current working directory.
   --verbose       Increase the verbosity of the output.
 
 DESCRIPTION
@@ -2052,10 +2173,45 @@ DESCRIPTION
   Packages your local theme files into a ZIP file that can be uploaded to Shopify.
 
   Only folders that match the "default Shopify theme folder structure"
-  (https://shopify.dev/docs/themes/tools/cli#directory-structure) are included in the package.
+  (https://shopify.dev/docs/storefronts/themes/tools/cli#directory-structure) are included in the package.
+
+  The package includes the `listings` directory if present (required for multi-preset themes per "Theme Store
+  requirements"
+  (https://shopify.dev/docs/storefronts/themes/store/requirements#adding-presets-to-your-theme-zip-submission)).
 
   The ZIP file uses the name `theme_name-theme_version.zip`, based on parameters in your "settings_schema.json"
-  (https://shopify.dev/docs/themes/architecture/config/settings-schema-json) file.
+  (https://shopify.dev/docs/storefronts/themes/architecture/config/settings-schema-json) file.
+```
+
+## `shopify theme profile`
+
+Profile the Liquid rendering of a theme page.
+
+```
+USAGE
+  $ shopify theme profile
+  $ shopify theme profile --url /products/classic-leather-jacket
+
+FLAGS
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -j, --json                    Output the result as JSON.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+  -t, --theme=<value>           Theme ID or name of the remote theme.
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --store-password=<value>  The password for storefronts with password protection.
+      --url=<value>             [default: /] The url to be used as context
+      --verbose                 Increase the verbosity of the output.
+
+DESCRIPTION
+  Profile the Liquid rendering of a theme page.
+
+  Profile the Shopify Liquid on a given page.
+
+  This command will open a web page with the Speedscope profiler detailing the time spent executing Liquid on the given
+  page.
 ```
 
 ## `shopify theme publish`
@@ -2064,17 +2220,19 @@ Set a remote theme as the live theme.
 
 ```
 USAGE
-  $ shopify theme publish [-e <value>] [-f] [--no-color] [--password <value>] [-s <value>] [-t <value>] [--verbose]
+  $ shopify theme publish [-e <value>...] [-f] [--no-color] [--password <value>] [--path <value>] [-s <value>] [-t
+    <value>] [--verbose]
 
 FLAGS
-  -e, --environment=<value>  The environment to apply to the current command.
-  -f, --force                Skip confirmation.
-  -s, --store=<value>        Store URL. It can be the store prefix (example) or the full myshopify.com URL
-                             (example.myshopify.com, https://example.myshopify.com).
-  -t, --theme=<value>        Theme ID or name of the remote theme.
-      --no-color             Disable color output.
-      --password=<value>     Password generated from the Theme Access app.
-      --verbose              Increase the verbosity of the output.
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -f, --force                   Skip confirmation.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+  -t, --theme=<value>           Theme ID or name of the remote theme.
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --verbose                 Increase the verbosity of the output.
 
 DESCRIPTION
   Set a remote theme as the live theme.
@@ -2097,23 +2255,25 @@ Download your remote theme files locally.
 
 ```
 USAGE
-  $ shopify theme pull [-d] [-e <value>] [-x <value>] [-l] [--no-color] [-n] [-o <value>] [--password <value>]
-    [--path <value>] [-s <value>] [-t <value>] [--verbose]
+  $ shopify theme pull [-d] [-e <value>...] [-x <value>...] [-l] [--no-color] [-n] [-o <value>...] [--password
+    <value>] [--path <value>] [-s <value>] [-t <value>] [--verbose]
 
 FLAGS
-  -d, --development          Pull theme files from your remote development theme.
-  -e, --environment=<value>  The environment to apply to the current command.
-  -l, --live                 Pull theme files from your remote live theme.
-  -n, --nodelete             Prevent deleting local files that don't exist remotely.
-  -o, --only=<value>...      Download only the specified files (Multiple flags allowed).
-  -s, --store=<value>        Store URL. It can be the store prefix (example) or the full myshopify.com URL
-                             (example.myshopify.com, https://example.myshopify.com).
-  -t, --theme=<value>        Theme ID or name of the remote theme.
-  -x, --ignore=<value>...    Skip downloading the specified files (Multiple flags allowed).
-      --no-color             Disable color output.
-      --password=<value>     Password generated from the Theme Access app.
-      --path=<value>         The path to your theme directory.
-      --verbose              Increase the verbosity of the output.
+  -d, --development             Pull theme files from your remote development theme.
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -l, --live                    Pull theme files from your remote live theme.
+  -n, --nodelete                Prevent deleting local files that don't exist remotely.
+  -o, --only=<value>...         Download only the specified files (Multiple flags allowed). Wrap the value in double
+                                quotes if you're using wildcards.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+  -t, --theme=<value>           Theme ID or name of the remote theme.
+  -x, --ignore=<value>...       Skip downloading the specified files (Multiple flags allowed). Wrap the value in double
+                                quotes if you're using wildcards.
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --verbose                 Increase the verbosity of the output.
 
 DESCRIPTION
   Download your remote theme files locally.
@@ -2133,24 +2293,26 @@ USAGE
   $ shopify theme push --unpublished --json
 
 FLAGS
-  -a, --allow-live           Allow push to a live theme.
-  -d, --development          Push theme files from your remote development theme.
-  -e, --environment=<value>  The environment to apply to the current command.
-  -j, --json                 Output the result as JSON.
-  -l, --live                 Push theme files from your remote live theme.
-  -n, --nodelete             Prevent deleting remote files that don't exist locally.
-  -o, --only=<value>...      Download only the specified files (Multiple flags allowed).
-  -p, --publish              Publish as the live theme after uploading.
-  -s, --store=<value>        Store URL. It can be the store prefix (example) or the full myshopify.com URL
-                             (example.myshopify.com, https://example.myshopify.com).
-  -t, --theme=<value>        Theme ID or name of the remote theme.
-  -u, --unpublished          Create a new unpublished theme and push to it.
-  -x, --ignore=<value>...    Skip downloading the specified files (Multiple flags allowed).
-      --no-color             Disable color output.
-      --password=<value>     Password generated from the Theme Access app.
-      --path=<value>         The path to your theme directory.
-      --strict               Require theme check to pass without errors before pushing. Warnings are allowed.
-      --verbose              Increase the verbosity of the output.
+  -a, --allow-live              Allow push to a live theme.
+  -d, --development             Push theme files from your remote development theme.
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -j, --json                    Output the result as JSON.
+  -l, --live                    Push theme files from your remote live theme.
+  -n, --nodelete                Prevent deleting remote files that don't exist locally.
+  -o, --only=<value>...         Upload only the specified files (Multiple flags allowed). Wrap the value in double
+                                quotes if you're using wildcards.
+  -p, --publish                 Publish as the live theme after uploading.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+  -t, --theme=<value>           Theme ID or name of the remote theme.
+  -u, --unpublished             Create a new unpublished theme and push to it.
+  -x, --ignore=<value>...       Skip uploading the specified files (Multiple flags allowed). Wrap the value in double
+                                quotes if you're using wildcards.
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --strict                  Require theme check to pass without errors before pushing. Warnings are allowed.
+      --verbose                 Increase the verbosity of the output.
 
 DESCRIPTION
   Uploads your local theme files to the connected store, overwriting the remote version if specified.
@@ -2195,20 +2357,21 @@ Renames an existing theme.
 
 ```
 USAGE
-  $ shopify theme rename [-d] [-e <value>] [-l] [-n <value>] [--no-color] [--password <value>] [-s <value>] [-t
-    <value>] [--verbose]
+  $ shopify theme rename [-d] [-e <value>...] [-l] [-n <value>] [--no-color] [--password <value>] [--path <value>]
+    [-s <value>] [-t <value>] [--verbose]
 
 FLAGS
-  -d, --development          Rename your development theme.
-  -e, --environment=<value>  The environment to apply to the current command.
-  -l, --live                 Rename your remote live theme.
-  -n, --name=<value>         The new name for the theme.
-  -s, --store=<value>        Store URL. It can be the store prefix (example) or the full myshopify.com URL
-                             (example.myshopify.com, https://example.myshopify.com).
-  -t, --theme=<value>        Theme ID or name of the remote theme.
-      --no-color             Disable color output.
-      --password=<value>     Password generated from the Theme Access app.
-      --verbose              Increase the verbosity of the output.
+  -d, --development             Rename your development theme.
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -l, --live                    Rename your remote live theme.
+  -n, --name=<value>            The new name for the theme.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+  -t, --theme=<value>           Theme ID or name of the remote theme.
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --verbose                 Increase the verbosity of the output.
 
 DESCRIPTION
   Renames an existing theme.
@@ -2225,16 +2388,17 @@ Creates a shareable, unpublished, and new theme on your theme library with a ran
 
 ```
 USAGE
-  $ shopify theme share [-e <value>] [--no-color] [--password <value>] [--path <value>] [-s <value>] [--verbose]
+  $ shopify theme share [-e <value>...] [--no-color] [--password <value>] [--path <value>] [-s <value>]
+    [--verbose]
 
 FLAGS
-  -e, --environment=<value>  The environment to apply to the current command.
-  -s, --store=<value>        Store URL. It can be the store prefix (example) or the full myshopify.com URL
-                             (example.myshopify.com, https://example.myshopify.com).
-      --no-color             Disable color output.
-      --password=<value>     Password generated from the Theme Access app.
-      --path=<value>         The path to your theme directory.
-      --verbose              Increase the verbosity of the output.
+  -e, --environment=<value>...  The environment to apply to the current command.
+  -s, --store=<value>           Store URL. It can be the store prefix (example) or the full myshopify.com URL
+                                (example.myshopify.com, https://example.myshopify.com).
+      --no-color                Disable color output.
+      --password=<value>        Password generated from the Theme Access app.
+      --path=<value>            The path where you want to run the command. Defaults to the current working directory.
+      --verbose                 Increase the verbosity of the output.
 
 DESCRIPTION
   Creates a shareable, unpublished, and new theme on your theme library with a randomized name.

@@ -1,5 +1,6 @@
+import {UserError} from '../../utilities/developer-platform-client.js'
 import {gql} from 'graphql-request'
-
+// eslint-disable-next-line @shopify/cli/no-inline-graphql
 export const AppRelease = gql`
   mutation AppRelease($apiKey: String!, $appVersionId: ID, $versionTag: String) {
     appRelease(input: {apiKey: $apiKey, appVersionId: $appVersionId, versionTag: $versionTag}) {
@@ -18,11 +19,6 @@ export const AppRelease = gql`
   }
 `
 
-interface ErrorDetail {
-  extension_id: number
-  extension_title: string
-}
-
 export interface AppReleaseVariables {
   apiKey: string
   versionTag?: string
@@ -31,16 +27,11 @@ export interface AppReleaseVariables {
 
 export interface AppReleaseSchema {
   appRelease: {
-    appVersion: {
+    appVersion?: {
       versionTag?: string | null
       message?: string | null
       location: string
     }
-    userErrors: {
-      field?: string[] | null
-      message: string
-      category: string
-      details: ErrorDetail[]
-    }[]
+    userErrors?: UserError[]
   }
 }

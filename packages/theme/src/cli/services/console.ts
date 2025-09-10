@@ -4,12 +4,12 @@ import {ensureValidPassword} from '../utilities/theme-environment/storefront-pas
 import {replLoop} from '../utilities/repl/repl.js'
 import {initializeDevServerSession} from '../utilities/theme-environment/dev-server-session.js'
 import {AdminSession} from '@shopify/cli-kit/node/session'
-import {consoleLog} from '@shopify/cli-kit/node/output'
+import {outputInfo} from '@shopify/cli-kit/node/output'
 
 export async function ensureReplEnv(adminSession: AdminSession, storePasswordFlag?: string) {
   const themeId = await findOrCreateReplTheme(adminSession)
 
-  const storePassword = (await isStorefrontPasswordProtected(adminSession.storeFqdn))
+  const storePassword = (await isStorefrontPasswordProtected(adminSession))
     ? await ensureValidPassword(storePasswordFlag, adminSession.storeFqdn)
     : undefined
 
@@ -33,7 +33,7 @@ export async function initializeRepl(
   themeAccessPassword?: string,
   storefrontPassword?: string,
 ) {
-  consoleLog('Welcome to Shopify Liquid console\n(press Ctrl + C to exit)')
+  outputInfo('Welcome to Shopify Liquid console\n(press Ctrl + C to exit)')
 
   const session = await initializeDevServerSession(themeId, adminSession, themeAccessPassword, storefrontPassword)
 

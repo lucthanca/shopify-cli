@@ -2,6 +2,7 @@ import {BaseProcess, DevProcessFunction} from './types.js'
 import {HostThemeManager} from '../../../utilities/extensions/theme/host-theme-manager.js'
 import {AppInterface} from '../../../models/app/app.js'
 import {OrganizationApp} from '../../../models/organization.js'
+import {ClientName} from '../../../utilities/developer-platform-client.js'
 import {outputDebug} from '@shopify/cli-kit/node/output'
 import {AdminSession, ensureAuthenticatedAdmin} from '@shopify/cli-kit/node/session'
 import {fetchTheme} from '@shopify/cli-kit/node/themes/api'
@@ -9,7 +10,7 @@ import {AbortError} from '@shopify/cli-kit/node/error'
 import {Theme} from '@shopify/cli-kit/node/themes/types'
 import {renderInfo, renderTasks, Task} from '@shopify/cli-kit/node/ui'
 import {initializeDevelopmentExtensionServer, ensureValidPassword, isStorefrontPasswordProtected} from '@shopify/theme'
-import {partnersFqdn} from '@shopify/cli-kit/node/context/fqdn'
+import {partnersFqdn, adminFqdn} from '@shopify/cli-kit/node/context/fqdn'
 
 interface ThemeAppExtensionServerOptions {
   theme: Theme
@@ -52,7 +53,7 @@ export async function setupPreviewThemeAppExtensionsProcess(
   ])
 
   const storeFqdn = adminSession.storeFqdn
-  const storefrontPassword = (await isStorefrontPasswordProtected(storeFqdn))
+  const storefrontPassword = (await isStorefrontPasswordProtected(adminSession))
     ? await ensureValidPassword('', storeFqdn)
     : undefined
 
@@ -146,7 +147,11 @@ export async function findOrCreateHostTheme(adminSession: AdminSession, theme?: 
 }
 
 async function buildAppUrl(remoteApp: OrganizationApp) {
-  const fqdn = await partnersFqdn()
-
-  return `https://${fqdn}/${remoteApp.organizationId}/apps/${remoteApp.id}/test`
+  if (remoteApp.developerPlatformClient?.clientName === ClientName.AppManagement) {
+    const fqdn = await adminFqdn()
+    return `https://${fqdn}/?organization_id=${remoteApp.organizationId}&no_redirect=true&redirect=/oauth/redirect_from_developer_dashboard?client_id%3D${remoteApp.apiKey}`
+  } else {
+    const fqdn = await partnersFqdn()
+    return `https://${fqdn}/${remoteApp.organizationId}/apps/${remoteApp.id}/test`
+  }
 }

@@ -2,6 +2,7 @@ import {themeFlags} from '../../flags.js'
 import ThemeCommand from '../../utilities/theme-command.js'
 import {ensureThemeStore} from '../../utilities/theme-store.js'
 import {ensureReplEnv, initializeRepl} from '../../services/console.js'
+import {validateThemePassword} from '../../services/flags-validation.js'
 import {globalFlags} from '@shopify/cli-kit/node/cli'
 import {ensureAuthenticatedThemes} from '@shopify/cli-kit/node/session'
 import {Flags} from '@oclif/core'
@@ -19,9 +20,7 @@ export default class Console extends ThemeCommand {
 
   static flags = {
     ...globalFlags,
-    store: themeFlags.store,
-    password: themeFlags.password,
-    environment: themeFlags.environment,
+    ...themeFlags,
     url: Flags.string({
       description: 'The url to be used as context',
       env: 'SHOPIFY_FLAG_URL',
@@ -35,10 +34,13 @@ export default class Console extends ThemeCommand {
 
   async run() {
     const {flags} = await this.parse(Console)
+
+    validateThemePassword(flags.password)
+
     const store = ensureThemeStore(flags)
     const {url, password: themeAccessPassword} = flags
 
-    const adminSession = await ensureAuthenticatedThemes(store, themeAccessPassword, [], true)
+    const adminSession = await ensureAuthenticatedThemes(store, themeAccessPassword)
 
     const {themeId, storePassword} = await ensureReplEnv(adminSession, flags['store-password'])
     await initializeRepl(adminSession, themeId, url, themeAccessPassword, storePassword)

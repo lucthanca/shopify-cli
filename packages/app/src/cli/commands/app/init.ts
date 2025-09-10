@@ -1,12 +1,13 @@
 import initPrompt, {visibleTemplates} from '../../prompts/init/init.js'
 import initService from '../../services/init/init.js'
 import {DeveloperPlatformClient, selectDeveloperPlatformClient} from '../../utilities/developer-platform-client.js'
-import {appFromId, selectOrg} from '../../services/context.js'
-import AppCommand, {AppCommandOutput} from '../../utilities/app-command.js'
+import {appFromIdentifiers, selectOrg} from '../../services/context.js'
+import AppLinkedCommand, {AppLinkedCommandOutput} from '../../utilities/app-linked-command.js'
 import {validateFlavorValue, validateTemplateValue} from '../../services/init/validate.js'
 import {MinimalOrganizationApp, Organization, OrganizationApp} from '../../models/organization.js'
 import {appNamePrompt, createAsNewAppPrompt, selectAppPrompt} from '../../prompts/dev.js'
 import {searchForAppsByNameFactory} from '../../services/dev/prompt-helpers.js'
+import {isValidName} from '../../models/app/validation/common.js'
 import {Flags} from '@oclif/core'
 import {globalFlags} from '@shopify/cli-kit/node/cli'
 import {resolvePath, cwd} from '@shopify/cli-kit/node/path'
@@ -17,7 +18,7 @@ import {generateRandomNameForSubdirectory} from '@shopify/cli-kit/node/fs'
 import {inferPackageManager} from '@shopify/cli-kit/node/node-package-manager'
 import {AbortError} from '@shopify/cli-kit/node/error'
 
-export default class Init extends AppCommand {
+export default class Init extends AppLinkedCommand {
   static summary?: string | undefined = 'Create a new app project'
 
   static flags = {
@@ -65,14 +66,14 @@ export default class Init extends AppCommand {
     }),
   }
 
-  async run(): Promise<AppCommandOutput> {
+  async run(): Promise<AppLinkedCommandOutput> {
     const {flags} = await this.parse(Init)
 
     validateTemplateValue(flags.template)
     validateFlavorValue(flags.template, flags.flavor)
 
     const inferredPackageManager = inferPackageManager(flags['package-manager'])
-    const name = flags.name ?? (await generateRandomNameForSubdirectory({suffix: 'app', directory: flags.path}))
+    const name = flags.name ?? (await getAppName(flags.path))
 
     // Force user authentication before prompting.
     let developerPlatformClient = selectDeveloperPlatformClient()
@@ -87,7 +88,7 @@ export default class Init extends AppCommand {
     let appName: string
     if (flags['client-id']) {
       // If a client-id is provided we don't need to prompt the user and can link directly to that app.
-      const selectedApp = await appFromId({apiKey: flags['client-id'], developerPlatformClient})
+      const selectedApp = await appFromIdentifiers({apiKey: flags['client-id']})
       appName = selectedApp.title
       developerPlatformClient = selectedApp.developerPlatformClient ?? developerPlatformClient
       selectAppResult = {result: 'existing', app: selectedApp}
@@ -126,6 +127,15 @@ export default class Init extends AppCommand {
   }
 }
 
+async function getAppName(directory: string): Promise<string> {
+  for (let i = 0; i < 3; i++) {
+    // eslint-disable-next-line no-await-in-loop
+    const name = await generateRandomNameForSubdirectory({suffix: 'app', directory})
+    if (isValidName(name)) return name
+  }
+  return ''
+}
+
 export type SelectAppOrNewAppNameResult =
   | {
       result: 'new'
@@ -158,7 +168,7 @@ async function selectAppOrNewAppName(
   } else {
     const app = await selectAppPrompt(searchForAppsByNameFactory(developerPlatformClient, org.id), apps, hasMorePages)
 
-    const fullSelectedApp = await developerPlatformClient.appFromId(app)
+    const fullSelectedApp = await developerPlatformClient.appFromIdentifiers(app.apiKey)
     if (!fullSelectedApp) throw new AbortError(`App with id ${app.id} not found`)
     return {result: 'existing', app: fullSelectedApp}
   }

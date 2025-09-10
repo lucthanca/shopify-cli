@@ -1,7 +1,7 @@
 import {hasRequiredThemeDirectories, mountThemeFileSystem} from '../utilities/theme-fs.js'
-import {currentDirectoryConfirmed} from '../utilities/theme-ui.js'
+import {ensureDirectoryConfirmed} from '../utilities/theme-ui.js'
 import {setupDevServer} from '../utilities/theme-environment/theme-environment.js'
-import {DevServerContext, LiveReload} from '../utilities/theme-environment/types.js'
+import {DevServerContext, ErrorOverlayMode, LiveReload} from '../utilities/theme-environment/types.js'
 import {isStorefrontPasswordProtected} from '../utilities/theme-environment/storefront-session.js'
 import {ensureValidPassword} from '../utilities/theme-environment/storefront-password-prompt.js'
 import {emptyThemeExtFileSystem} from '../utilities/theme-fs-empty.js'
@@ -18,7 +18,7 @@ import readline from 'readline'
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = '9292'
 
-export interface DevOptions {
+interface DevOptions {
   adminSession: AdminSession
   directory: string
   store: string
@@ -31,6 +31,7 @@ export interface DevOptions {
   force: boolean
   'theme-editor-sync': boolean
   'live-reload': LiveReload
+  'error-overlay': ErrorOverlayMode
   noDelete: boolean
   ignore: string[]
   only: string[]
@@ -38,13 +39,12 @@ export interface DevOptions {
 }
 
 export async function dev(options: DevOptions) {
-  if (!(await hasRequiredThemeDirectories(options.directory)) && !(await currentDirectoryConfirmed(options.force))) {
+  if (!(await hasRequiredThemeDirectories(options.directory)) && !(await ensureDirectoryConfirmed(options.force))) {
     return
   }
 
-  const storefrontPasswordPromise = isStorefrontPasswordProtected(options.adminSession.storeFqdn).then(
-    (needsPassword) =>
-      needsPassword ? ensureValidPassword(options.storePassword, options.adminSession.storeFqdn) : undefined,
+  const storefrontPasswordPromise = await isStorefrontPasswordProtected(options.adminSession).then((needsPassword) =>
+    needsPassword ? ensureValidPassword(options.storePassword, options.adminSession.storeFqdn) : undefined,
   )
 
   const localThemeExtensionFileSystem = emptyThemeExtFileSystem()
@@ -66,7 +66,7 @@ export async function dev(options: DevOptions) {
   const urls = {
     local: `http://${host}:${port}`,
     giftCard: `http://${host}:${port}/gift_cards/[store_id]/preview`,
-    themeEditor: `https://${options.store}/admin/themes/${options.theme.id}/editor`,
+    themeEditor: `https://${options.store}/admin/themes/${options.theme.id}/editor?hr=${port}`,
     preview: `https://${options.store}/?preview_theme_id=${options.theme.id}`,
   }
 
@@ -82,6 +82,7 @@ export async function dev(options: DevOptions) {
     localThemeFileSystem,
     localThemeExtensionFileSystem,
     directory: options.directory,
+    type: 'theme',
     options: {
       themeEditorSync: options['theme-editor-sync'],
       host,
@@ -91,6 +92,7 @@ export async function dev(options: DevOptions) {
       noDelete: options.noDelete,
       ignore: options.ignore,
       only: options.only,
+      errorOverlay: options['error-overlay'],
     },
   }
 

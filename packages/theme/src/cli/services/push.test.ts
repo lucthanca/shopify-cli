@@ -7,7 +7,7 @@ import {findOrSelectTheme} from '../utilities/theme-selector.js'
 import {runThemeCheck} from '../commands/theme/check.js'
 import {buildTheme} from '@shopify/cli-kit/node/themes/factories'
 import {test, describe, vi, expect, beforeEach} from 'vitest'
-import {createTheme, fetchTheme, themePublish} from '@shopify/cli-kit/node/themes/api'
+import {themeCreate, fetchTheme, themePublish} from '@shopify/cli-kit/node/themes/api'
 import {ensureAuthenticatedThemes} from '@shopify/cli-kit/node/session'
 import {
   DEVELOPMENT_THEME_ROLE,
@@ -18,6 +18,7 @@ import {
 import {renderConfirmationPrompt} from '@shopify/cli-kit/node/ui'
 import {AbortError} from '@shopify/cli-kit/node/error'
 import {Severity, SourceCodeType} from '@shopify/theme-check-node'
+import {outputResult} from '@shopify/cli-kit/node/output'
 
 vi.mock('../utilities/theme-uploader.js')
 vi.mock('../utilities/theme-store.js')
@@ -28,6 +29,7 @@ vi.mock('@shopify/cli-kit/node/session')
 vi.mock('@shopify/cli-kit/node/themes/api')
 vi.mock('@shopify/cli-kit/node/ui')
 vi.mock('../commands/theme/check.js')
+vi.mock('@shopify/cli-kit/node/output')
 
 const path = '/my-theme'
 const defaultFlags: PullFlags = {
@@ -50,6 +52,7 @@ describe('push', () => {
     })
     vi.mocked(ensureThemeStore).mockReturnValue('example.myshopify.com')
     vi.mocked(ensureAuthenticatedThemes).mockResolvedValue(adminSession)
+    vi.mocked(outputResult).mockReturnValue()
   })
 
   test('should call themePublish if publish flag is provided', async () => {
@@ -62,6 +65,57 @@ describe('push', () => {
 
     // Then
     expect(themePublish).toHaveBeenCalledWith(theme.id, adminSession)
+  })
+
+  test('includes errors in JSON output when using --json flag', async () => {
+    // Given
+    const theme = buildTheme({id: 1, name: 'Theme', role: 'development'})!
+    vi.mocked(findOrSelectTheme).mockResolvedValue(theme)
+
+    const uploadResults = new Map()
+    uploadResults.set('assets/theme.css', {
+      success: false,
+      errors: {
+        asset: ['Invalid CSS syntax at line 42'],
+      },
+    })
+    uploadResults.set('layout/theme.liquid', {
+      success: false,
+      errors: {
+        asset: ['Missing endif tag'],
+      },
+    })
+    uploadResults.set('assets/valid.js', {
+      success: true,
+    })
+
+    vi.mocked(uploadTheme).mockResolvedValue({
+      workPromise: Promise.resolve(),
+      uploadResults,
+      renderThemeSyncProgress: () => Promise.resolve(),
+    })
+
+    // When
+    await push({...defaultFlags, json: true})
+
+    // Then
+    expect(outputResult).toHaveBeenCalledWith(
+      JSON.stringify({
+        theme: {
+          id: 1,
+          name: 'Theme',
+          role: 'development',
+          shop: '',
+          editor_url: 'https:///admin/themes/1/editor',
+          preview_url: 'https://?preview_theme_id=1',
+          warning: "The theme 'Theme' was pushed with errors",
+          errors: {
+            'assets/theme.css': ['Invalid CSS syntax at line 42'],
+            'layout/theme.liquid': ['Missing endif tag'],
+          },
+        },
+      }),
+    )
   })
 
   describe('strict mode', () => {
@@ -191,7 +245,7 @@ describe('push', () => {
 describe('createOrSelectTheme', async () => {
   test('creates unpublished theme when unpublished flag is provided', async () => {
     // Given
-    vi.mocked(createTheme).mockResolvedValue(buildTheme({id: 2, name: 'Theme', role: UNPUBLISHED_THEME_ROLE}))
+    vi.mocked(themeCreate).mockResolvedValue(buildTheme({id: 2, name: 'Theme', role: UNPUBLISHED_THEME_ROLE}))
     vi.mocked(fetchTheme).mockResolvedValue(undefined)
 
     const flags: PushFlags = {unpublished: true}
@@ -206,7 +260,7 @@ describe('createOrSelectTheme', async () => {
 
   test('creates development theme when development flag is provided', async () => {
     // Given
-    vi.mocked(createTheme).mockResolvedValue(buildTheme({id: 1, name: 'Theme', role: DEVELOPMENT_THEME_ROLE}))
+    vi.mocked(themeCreate).mockResolvedValue(buildTheme({id: 1, name: 'Theme', role: DEVELOPMENT_THEME_ROLE}))
     vi.mocked(fetchTheme).mockResolvedValue(undefined)
     const flags: PushFlags = {development: true}
 
@@ -220,7 +274,7 @@ describe('createOrSelectTheme', async () => {
 
   test('creates development theme when development and unpublished flags are provided', async () => {
     // Given
-    vi.mocked(createTheme).mockResolvedValue(buildTheme({id: 1, name: 'Theme', role: DEVELOPMENT_THEME_ROLE}))
+    vi.mocked(themeCreate).mockResolvedValue(buildTheme({id: 1, name: 'Theme', role: DEVELOPMENT_THEME_ROLE}))
     vi.mocked(fetchTheme).mockResolvedValue(undefined)
     const flags: PushFlags = {development: true, unpublished: true}
 

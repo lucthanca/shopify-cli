@@ -1,5 +1,4 @@
 import {validateSession} from './validate.js'
-import {validateIdentityToken} from './identity-token-validation.js'
 import {applicationId} from './identity.js'
 import {IdentityToken, validateCachedIdentityTokenStructure} from './schema.js'
 import {OAuthApplications} from '../session.js'
@@ -77,7 +76,6 @@ beforeEach(() => {
   vi.mocked(applicationId).mockImplementation((id: any) => id)
   vi.mocked(validateCachedIdentityTokenStructure).mockReturnValue(true)
   vi.setSystemTime(currentDate)
-  vi.mocked(validateIdentityToken).mockResolvedValue(true)
 })
 
 afterAll(() => {
@@ -118,21 +116,6 @@ describe('validateSession', () => {
   test('returns needs_full_auth if there is no session', async () => {
     // Given
     const session: any = undefined
-
-    // When
-    const got = await validateSession(requestedScopes, defaultApps, session)
-
-    // Then
-    expect(got).toBe('needs_full_auth')
-  })
-
-  test('returns needs_full_auth if identity token is invalid', async () => {
-    // Given
-    const session = {
-      identity: validIdentity,
-      applications: validApplications,
-    }
-    vi.mocked(validateIdentityToken).mockResolvedValueOnce(false)
 
     // When
     const got = await validateSession(requestedScopes, defaultApps, session)

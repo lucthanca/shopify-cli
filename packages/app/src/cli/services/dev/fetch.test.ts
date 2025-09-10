@@ -1,6 +1,5 @@
-import {fetchOrganizations, fetchStore, fetchStoreByDomain, NoOrgError} from './fetch.js'
+import {fetchOrganizations, fetchStore, NoOrgError} from './fetch.js'
 import {Organization, OrganizationSource, OrganizationStore} from '../../models/organization.js'
-import {FindStoreByDomainSchema} from '../../api/graphql/find_store_by_domain.js'
 import {
   testPartnersServiceSession,
   testPartnersUserSession,
@@ -31,17 +30,7 @@ const STORE1: OrganizationStore = {
   shopName: 'store1',
   transferDisabled: false,
   convertableToPartnerTest: false,
-}
-const FETCH_STORE_RESPONSE_VALUE: FindStoreByDomainSchema = {
-  organizations: {
-    nodes: [
-      {
-        id: ORG1.id,
-        businessName: ORG1.businessName,
-        stores: {nodes: [STORE1]},
-      },
-    ],
-  },
+  provisionable: true,
 }
 
 vi.mock('@shopify/cli-kit/node/api/partners')
@@ -54,7 +43,7 @@ afterEach(() => {
 })
 
 describe('fetchOrganizations', async () => {
-  test('returns fetched organizations from Partners when App Management is disabled', async () => {
+  test('returns fetched organizations from Partners and App Management', async () => {
     // Given
     const partnersClient: PartnersClient = testDeveloperPlatformClient({
       organizations: () => Promise.resolve([ORG1]),
@@ -69,28 +58,7 @@ describe('fetchOrganizations', async () => {
     const got = await fetchOrganizations()
 
     // Then
-    expect(got).toEqual([ORG1])
-    expect(partnersClient.organizations).toHaveBeenCalled()
-    expect(appManagementClient.organizations).not.toHaveBeenCalled()
-  })
-
-  test('returns fetched organizations from Partners and App Management when App Management is enabled', async () => {
-    // Given
-    vi.stubEnv('USE_APP_MANAGEMENT_API', '1')
-    const partnersClient: PartnersClient = testDeveloperPlatformClient({
-      organizations: () => Promise.resolve([ORG1]),
-    }) as PartnersClient
-    const appManagementClient: AppManagementClient = testDeveloperPlatformClient({
-      organizations: () => Promise.resolve([ORG2]),
-    }) as AppManagementClient
-    vi.mocked(PartnersClient).mockReturnValue(partnersClient)
-    vi.mocked(AppManagementClient).mockReturnValue(appManagementClient)
-
-    // When
-    const got = await fetchOrganizations()
-
-    // Then
-    expect(got).toEqual([ORG1, ORG2])
+    expect(got).toEqual([ORG2, ORG1])
     expect(partnersClient.organizations).toHaveBeenCalled()
     expect(appManagementClient.organizations).toHaveBeenCalled()
   })
@@ -100,30 +68,19 @@ describe('fetchOrganizations', async () => {
     const partnersClient: PartnersClient = testDeveloperPlatformClient({
       organizations: () => Promise.resolve([]),
     }) as PartnersClient
+    const appManagementClient: AppManagementClient = testDeveloperPlatformClient({
+      organizations: () => Promise.resolve([]),
+    }) as AppManagementClient
     vi.mocked(PartnersClient).mockReturnValue(partnersClient)
+    vi.mocked(AppManagementClient).mockReturnValue(appManagementClient)
 
     // When
     const got = fetchOrganizations()
 
     // Then
-    await expect(got).rejects.toThrow(new NoOrgError(testPartnersUserSession.accountInfo))
+    await expect(got).rejects.toThrow('No Organization found')
     expect(partnersClient.organizations).toHaveBeenCalled()
-  })
-})
-
-describe('fetchStoreByDomain', async () => {
-  test('returns fetched store and organization', async () => {
-    // Given
-    const developerPlatformClient: DeveloperPlatformClient = testDeveloperPlatformClient({
-      storeByDomain: (_orgId: string, _shopDomain: string) => Promise.resolve(FETCH_STORE_RESPONSE_VALUE),
-    })
-
-    // When
-    const got = await fetchStoreByDomain(ORG1.id, 'domain1', developerPlatformClient)
-
-    // Then
-    expect(got).toEqual({organization: ORG1, store: STORE1})
-    expect(developerPlatformClient.storeByDomain).toHaveBeenCalledWith(ORG1.id, 'domain1')
+    expect(appManagementClient.organizations).toHaveBeenCalled()
   })
 })
 
@@ -131,7 +88,7 @@ describe('fetchStore', () => {
   test('returns fetched store', async () => {
     // Given
     const developerPlatformClient: DeveloperPlatformClient = testDeveloperPlatformClient({
-      storeByDomain: (_orgId: string, _shopDomain: string) => Promise.resolve(FETCH_STORE_RESPONSE_VALUE),
+      storeByDomain: (_orgId: string, _shopDomain: string) => Promise.resolve(STORE1),
     })
 
     // When
@@ -145,7 +102,7 @@ describe('fetchStore', () => {
   test('throws error if store not found', async () => {
     // Given
     const developerPlatformClient: DeveloperPlatformClient = testDeveloperPlatformClient({
-      storeByDomain: (_orgId: string, _shopDomain: string) => Promise.resolve({organizations: {nodes: []}}),
+      storeByDomain: (_orgId: string, _shopDomain: string) => Promise.resolve(undefined),
     })
 
     // When

@@ -5,10 +5,11 @@ import BaseCommand from '../../public/node/base-command.js'
 import {CommandContent} from '../../public/node/hooks/prerun.js'
 import * as metadata from '../../public/node/metadata.js'
 import {platformAndArch} from '../../public/node/os.js'
+import {ciPlatform, cloudEnvironment, macAddress} from '../../public/node/context/local.js'
+import {cwd} from '../../public/node/path.js'
+import {currentProcessIsGlobal} from '../../public/node/is-global.js'
+import {isWsl} from '../../public/node/system.js'
 import {Command, Interfaces} from '@oclif/core'
-import {ciPlatform, cloudEnvironment, macAddress} from '@shopify/cli-kit/node/context/local'
-import {cwd} from '@shopify/cli-kit/node/path'
-import {currentProcessIsGlobal} from '@shopify/cli-kit/node/is-global'
 
 interface StartOptions {
   commandContent: CommandContent
@@ -63,6 +64,8 @@ interface EnvironmentData {
   env_package_manager: string
   env_is_global: boolean
   env_auth_method: string
+  env_is_wsl: boolean
+  env_build_repository: string
 }
 
 export async function getEnvironmentData(config: Interfaces.Config): Promise<EnvironmentData> {
@@ -86,6 +89,8 @@ export async function getEnvironmentData(config: Interfaces.Config): Promise<Env
     env_package_manager: await getPackageManager(cwd()),
     env_is_global: currentProcessIsGlobal(),
     env_auth_method: await getLastSeenAuthMethod(),
+    env_is_wsl: await isWsl(),
+    env_build_repository: process.env.SHOPIFY_CLI_BUILD_REPO ?? 'unknown',
   }
 }
 

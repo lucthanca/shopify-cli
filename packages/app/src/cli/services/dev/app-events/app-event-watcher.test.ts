@@ -12,6 +12,8 @@ import {
 import {ExtensionInstance} from '../../../models/extensions/extension-instance.js'
 import {loadApp, reloadApp} from '../../../models/app/loader.js'
 import {AppLinkedInterface} from '../../../models/app/app.js'
+import {AppAccessSpecIdentifier} from '../../../models/extensions/specifications/app_config_app_access.js'
+import {PosSpecIdentifier} from '../../../models/extensions/specifications/app_config_point_of_sale.js'
 import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest'
 import {AbortSignal, AbortController} from '@shopify/cli-kit/node/abort'
 import {flushPromises} from '@shopify/cli-kit/node/promises'
@@ -23,9 +25,9 @@ vi.mock('../../../models/app/loader.js')
 vi.mock('./app-watcher-esbuild.js')
 
 // Extensions 1 and 1B simulate extensions defined in the same directory (same toml)
-const extension1 = await testUIExtension({type: 'ui_extension', handle: 'h1', directory: '/extensions/ui_extension_1'})
-const extension1B = await testUIExtension({type: 'ui_extension', handle: 'h2', directory: '/extensions/ui_extension_1'})
-const extension2 = await testUIExtension({type: 'ui_extension', directory: '/extensions/ui_extension_2'})
+const extension1 = await testUIExtension({type: 'ui_extension', directory: '/extensions/ui_extension_1', uid: 'uid1'})
+const extension1B = await testUIExtension({type: 'ui_extension', directory: '/extensions/ui_extension_1', uid: 'uid1B'})
+const extension2 = await testUIExtension({type: 'ui_extension', directory: '/extensions/ui_extension_2', uid: 'uid2'})
 const flowExtension = await testFlowActionExtension('/extensions/flow_action')
 const posExtension = await testAppConfigExtensions()
 const appAccessExtension = await testAppAccessConfigExtension()
@@ -35,14 +37,14 @@ const webhookExtension = await testSingleWebhookSubscriptionExtension()
 const extension1Updated = await testUIExtension({
   type: 'ui_extension',
   name: 'updated_name1',
-  handle: 'h1',
   directory: '/extensions/ui_extension_1',
+  uid: 'uid1',
 })
 const extension1BUpdated = await testUIExtension({
   type: 'ui_extension',
   name: 'updated_name1B',
-  handle: 'h2',
   directory: '/extensions/ui_extension_1',
+  uid: 'uid1B',
 })
 const posExtensionUpdated = await testAppConfigExtensions(true)
 
@@ -105,9 +107,7 @@ const testCases: TestCase[] = [
     },
     initialExtensions: [extension1, posExtension],
     finalExtensions: [extension1, extension2, posExtension],
-    extensionEvents: [
-      {type: EventType.Created, extension: extension2, buildResult: {status: 'ok', handle: 'test-ui-extension'}},
-    ],
+    extensionEvents: [{type: EventType.Created, extension: extension2, buildResult: {status: 'ok', uid: 'uid2'}}],
     needsAppReload: true,
   },
   {
@@ -120,7 +120,7 @@ const testCases: TestCase[] = [
     },
     initialExtensions: [extension1, extension2, posExtension],
     finalExtensions: [extension1, extension2, posExtension],
-    extensionEvents: [{type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', handle: 'h1'}}],
+    extensionEvents: [{type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', uid: 'uid1'}}],
   },
   {
     name: 'file_updated affecting a single extension',
@@ -132,7 +132,7 @@ const testCases: TestCase[] = [
     },
     initialExtensions: [extension1, extension2, posExtension],
     finalExtensions: [extension1, extension2, posExtension],
-    extensionEvents: [{type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', handle: 'h1'}}],
+    extensionEvents: [{type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', uid: 'uid1'}}],
   },
   {
     name: 'file_deleted affecting a single extension',
@@ -144,7 +144,19 @@ const testCases: TestCase[] = [
     },
     initialExtensions: [extension1, extension2, posExtension],
     finalExtensions: [extension1, extension2, posExtension],
-    extensionEvents: [{type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', handle: 'h1'}}],
+    extensionEvents: [{type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', uid: 'uid1'}}],
+  },
+  {
+    name: 'file_updated not affecting any extension',
+    fileWatchEvent: {
+      type: 'file_updated',
+      path: '/extensions/ui_extension_unknown/locales/en.json',
+      extensionPath: '/extensions/ui_extension_unknown',
+      startTime: [0, 0],
+    },
+    initialExtensions: [extension1, extension2, posExtension],
+    finalExtensions: [extension1, extension2, posExtension],
+    extensionEvents: [],
   },
   {
     name: 'file_created affecting a multiple extensions',
@@ -157,8 +169,8 @@ const testCases: TestCase[] = [
     initialExtensions: [extension1, extension1B, extension2, posExtension],
     finalExtensions: [extension1, extension1B, extension2, posExtension],
     extensionEvents: [
-      {type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', handle: 'h1'}},
-      {type: EventType.Updated, extension: extension1B, buildResult: {status: 'ok', handle: 'h2'}},
+      {type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', uid: 'uid1'}},
+      {type: EventType.Updated, extension: extension1B, buildResult: {status: 'ok', uid: 'uid1B'}},
     ],
   },
   {
@@ -172,8 +184,8 @@ const testCases: TestCase[] = [
     initialExtensions: [extension1, extension1B, extension2, posExtension],
     finalExtensions: [extension1, extension1B, extension2, posExtension],
     extensionEvents: [
-      {type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', handle: 'h1'}},
-      {type: EventType.Updated, extension: extension1B, buildResult: {status: 'ok', handle: 'h2'}},
+      {type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', uid: 'uid1'}},
+      {type: EventType.Updated, extension: extension1B, buildResult: {status: 'ok', uid: 'uid1B'}},
     ],
   },
   {
@@ -187,8 +199,8 @@ const testCases: TestCase[] = [
     initialExtensions: [extension1, extension1B, extension2, posExtension],
     finalExtensions: [extension1, extension1B, extension2, posExtension],
     extensionEvents: [
-      {type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', handle: 'h1'}},
-      {type: EventType.Updated, extension: extension1B, buildResult: {status: 'ok', handle: 'h2'}},
+      {type: EventType.Updated, extension: extension1, buildResult: {status: 'ok', uid: 'uid1'}},
+      {type: EventType.Updated, extension: extension1B, buildResult: {status: 'ok', uid: 'uid1B'}},
     ],
   },
   {
@@ -202,9 +214,17 @@ const testCases: TestCase[] = [
     initialExtensions: [extension1, extension2, posExtension, webhookExtension],
     finalExtensions: [extension1, extension2, posExtensionUpdated, appAccessExtension],
     extensionEvents: [
-      {type: EventType.Updated, extension: posExtensionUpdated, buildResult: {status: 'ok', handle: 'point-of-sale'}},
+      {
+        type: EventType.Updated,
+        extension: posExtensionUpdated,
+        buildResult: {status: 'ok', uid: PosSpecIdentifier},
+      },
       {type: EventType.Deleted, extension: webhookExtension},
-      {type: EventType.Created, extension: appAccessExtension, buildResult: {status: 'ok', handle: 'app-access'}},
+      {
+        type: EventType.Created,
+        extension: appAccessExtension,
+        buildResult: {status: 'ok', uid: AppAccessSpecIdentifier},
+      },
     ],
     needsAppReload: true,
   },
@@ -219,8 +239,8 @@ const testCases: TestCase[] = [
     initialExtensions: [extension1, extension1B, extension2],
     finalExtensions: [extension1Updated, extension1BUpdated, extension2],
     extensionEvents: [
-      {type: EventType.Updated, extension: extension1Updated, buildResult: {status: 'ok', handle: 'h1'}},
-      {type: EventType.Updated, extension: extension1BUpdated, buildResult: {status: 'ok', handle: 'h2'}},
+      {type: EventType.Updated, extension: extension1Updated, buildResult: {status: 'ok', uid: 'uid1'}},
+      {type: EventType.Updated, extension: extension1BUpdated, buildResult: {status: 'ok', uid: 'uid1B'}},
     ],
     needsAppReload: true,
   },
@@ -295,7 +315,7 @@ describe('app-event-watcher', () => {
           const initialEvents = app.realExtensions.map((eve) => ({
             type: EventType.Updated,
             extension: eve,
-            buildResult: {status: 'ok', handle: eve.handle},
+            buildResult: {status: 'ok', uid: eve.uid},
           }))
           expect(emitSpy).toHaveBeenCalledWith('ready', {
             app,
@@ -375,8 +395,8 @@ describe('app-event-watcher', () => {
         }
 
         // Given
-        const esbuildError = {message: 'Build failed'}
-        flowExtension.buildForBundle = vi.fn().mockRejectedValueOnce(esbuildError)
+        const buildError = {message: 'Build failed'}
+        flowExtension.buildForBundle = vi.fn().mockRejectedValueOnce(buildError)
 
         const buildOutputPath = joinPath(tmpDir, '.shopify', 'bundle')
         const app = testAppLinked({
@@ -399,6 +419,44 @@ describe('app-event-watcher', () => {
         expect(stderr.write).toHaveBeenCalledWith(`Build failed`)
       })
     })
+
+    test('uncaught errors are emitted', async () => {
+      await inTemporaryDirectory(async (tmpDir) => {
+        const fileWatchEvent: WatcherEvent = {
+          type: 'file_updated',
+          path: '/extensions/ui_extension_1/src/file.js',
+          extensionPath: '/extensions/ui_extension_1',
+          startTime: [0, 0],
+        }
+
+        // Given
+        const uncaughtError = new Error('Unexpected error')
+
+        const buildOutputPath = joinPath(tmpDir, '.shopify', 'bundle')
+        const app = testAppLinked({
+          allExtensions: [extension1],
+          configuration: {scopes: '', extension_directories: [], path: 'shopify.app.custom.toml'},
+        })
+        const mockFileWatcher = new MockFileWatcher(app, outputOptions, [fileWatchEvent])
+
+        // When
+        const mockManager = new MockESBuildContextManager()
+        mockManager.updateContexts = vi.fn().mockRejectedValueOnce(uncaughtError)
+
+        const watcher = new AppEventWatcher(app, 'url', buildOutputPath, mockManager, mockFileWatcher)
+        const stderr = {write: vi.fn()} as unknown as Writable
+        const stdout = {write: vi.fn()} as unknown as Writable
+        const errorHandler = vi.fn()
+        watcher.onError(errorHandler)
+
+        await watcher.start({stdout, stderr, signal: abortController.signal})
+
+        await flushPromises()
+
+        // Then
+        expect(errorHandler).toHaveBeenCalledWith(uncaughtError)
+      })
+    })
   })
 })
 // Mock class for ESBuildContextManager
@@ -406,8 +464,9 @@ describe('app-event-watcher', () => {
 class MockESBuildContextManager extends ESBuildContextManager {
   contexts = {
     // The keys are the extension handles, the values are the ESBuild contexts mocked
-    h1: [{rebuild: vi.fn(), watch: vi.fn(), serve: vi.fn(), cancel: vi.fn(), dispose: vi.fn()}],
-    h2: [{rebuild: vi.fn(), watch: vi.fn(), serve: vi.fn(), cancel: vi.fn(), dispose: vi.fn()}],
+    uid1: [{rebuild: vi.fn(), watch: vi.fn(), serve: vi.fn(), cancel: vi.fn(), dispose: vi.fn()}],
+    uid1B: [{rebuild: vi.fn(), watch: vi.fn(), serve: vi.fn(), cancel: vi.fn(), dispose: vi.fn()}],
+    uid2: [{rebuild: vi.fn(), watch: vi.fn(), serve: vi.fn(), cancel: vi.fn(), dispose: vi.fn()}],
     'test-ui-extension': [{rebuild: vi.fn(), watch: vi.fn(), serve: vi.fn(), cancel: vi.fn(), dispose: vi.fn()}],
   }
 

@@ -4,16 +4,23 @@ import {outputDebug} from '@shopify/cli-kit/node/output'
 import {performActionWithRetryAfterRecovery} from '@shopify/cli-kit/common/retry'
 import {fetch} from '@shopify/cli-kit/node/http'
 import {PipelineSource} from 'stream'
+import {pipeline} from 'stream/promises'
 import stream from 'node:stream/promises'
 import fs from 'node:fs'
 import * as gzip from 'node:zlib'
 import {fileURLToPath} from 'node:url'
 
-const FUNCTION_RUNNER_VERSION = 'v6.4.0'
-const JAVY_VERSION = 'v4.0.0'
-// The Javy plugin version does not need to match the Javy version. It should
-// match the plugin version used in the function-runner version specified above.
-const JAVY_PLUGIN_VERSION = 'v3.2.0'
+export const PREFERRED_FUNCTION_RUNNER_VERSION = 'v9.0.0'
+
+// Javy dependencies.
+export const PREFERRED_JAVY_VERSION = 'v5.0.3'
+// The Javy plugin version should match the plugin version used in the
+// function-runner version specified above.
+export const PREFERRED_JAVY_PLUGIN_VERSION = 'v2'
+
+const BINARYEN_VERSION = '123.0.0'
+
+export const TRAMPOLINE_VERSION = 'v1.0.2'
 
 interface DownloadableBinary {
   path: string
@@ -24,6 +31,32 @@ interface DownloadableBinary {
   processResponse(responseStream: PipelineSource<unknown>, outputStream: fs.WriteStream): Promise<void>
 }
 
+export interface BinaryDependencies {
+  functionRunner: string
+  javy: string
+  javyPlugin: string
+}
+
+// Derives the binary dependencies to be used with a particular
+// `@shopify/shopify_function` package version.
+export function deriveJavaScriptBinaryDependencies(version: string): BinaryDependencies | null {
+  if (version === '0' || version === '1') {
+    return {
+      functionRunner: 'v7.0.1',
+      javy: 'v4.0.0',
+      javyPlugin: 'v1',
+    }
+  } else if (version === '2') {
+    return {
+      functionRunner: PREFERRED_FUNCTION_RUNNER_VERSION,
+      javy: PREFERRED_JAVY_VERSION,
+      javyPlugin: PREFERRED_JAVY_PLUGIN_VERSION,
+    }
+  } else {
+    return null
+  }
+}
+
 // The logic for determining the download URL and what to do with the response stream is _coincidentally_ the same for
 // Javy and function-runner for now. Those methods may not continue to have the same logic in the future. If they
 // diverge, create different classes to handle the different logic polymorphically.
@@ -31,12 +64,20 @@ class Executable implements DownloadableBinary {
   readonly name: string
   readonly version: string
   readonly path: string
+  readonly release: string
   private readonly gitHubRepo: string
 
-  constructor(name: string, version: string, gitHubRepo: string) {
+  constructor(name: string, version: string, gitHubRepo: string, release = version) {
     this.name = name
     this.version = version
-    const filename = process.platform === 'win32' ? `${name}.exe` : name
+    this.release = release
+
+    let filename: string
+    // add version to the filename
+    filename = `${name}-${version}`
+    // add .exe if it's windows
+    filename = process.platform === 'win32' ? `${filename}.exe` : filename
+
     this.path = joinPath(dirname(fileURLToPath(import.meta.url)), '..', 'bin', filename)
     this.gitHubRepo = gitHubRepo
   }
@@ -79,7 +120,7 @@ class Executable implements DownloadableBinary {
       throw Error(`Unsupported platform/architecture combination ${processPlatform}/${processArch}`)
     }
 
-    return `https://github.com/${this.gitHubRepo}/releases/download/${this.version}/${this.name}-${archPlatform}-${this.version}.gz`
+    return `https://github.com/${this.gitHubRepo}/releases/download/${this.release}/${this.name}-${archPlatform}-${this.version}.gz`
   }
 
   async processResponse(responseStream: PipelineSource<unknown>, outputStream: fs.WriteStream): Promise<void> {
@@ -92,44 +133,74 @@ class JavyPlugin implements DownloadableBinary {
   readonly version: string
   readonly path: string
 
-  constructor() {
-    this.name = 'javy_quickjs_provider_v3'
-    this.version = JAVY_PLUGIN_VERSION
-    this.path = joinPath(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'javy_quickjs_provider_v3.wasm')
+  constructor(version: string) {
+    this.name = `shopify_functions_javy_${version}`
+    this.version = version
+    this.path = joinPath(dirname(fileURLToPath(import.meta.url)), '..', 'bin', `shopify_functions_javy_${version}.wasm`)
   }
 
   downloadUrl(_processPlatform: string, _processArch: string) {
-    return `https://github.com/bytecodealliance/javy/releases/download/${this.version}/plugin.wasm.gz`
+    return `https://cdn.shopify.com/shopifycloud/shopify-functions-javy-plugin/shopify_functions_javy_${this.version}.wasm`
   }
 
   async processResponse(responseStream: PipelineSource<unknown>, outputStream: fs.WriteStream): Promise<void> {
-    return gunzipResponse(responseStream, outputStream)
+    return pipeline(responseStream, outputStream)
   }
 }
 
-let _javy: DownloadableBinary
-let _javyPlugin: DownloadableBinary
-let _functionRunner: DownloadableBinary
+class WasmOptExecutable implements DownloadableBinary {
+  readonly name: string
+  readonly version: string
+  readonly path: string
 
-export function javyBinary() {
-  if (!_javy) {
-    _javy = new Executable('javy', JAVY_VERSION, 'bytecodealliance/javy')
+  constructor(name: string, version: string) {
+    this.name = name
+    this.version = version
+    this.path = joinPath(dirname(fileURLToPath(import.meta.url)), '..', 'bin', name)
   }
-  return _javy
+
+  downloadUrl(_processPlatform: string, _processArch: string) {
+    return `https://cdn.jsdelivr.net/npm/binaryen@${this.version}/bin/wasm-opt`
+  }
+
+  async processResponse(responseStream: PipelineSource<unknown>, outputStream: fs.WriteStream): Promise<void> {
+    await stream.pipeline(responseStream, outputStream)
+  }
 }
 
-export function javyPluginBinary() {
-  if (!_javyPlugin) {
-    _javyPlugin = new JavyPlugin()
-  }
-  return _javyPlugin
+let _wasmOpt: DownloadableBinary
+let _trampoline: DownloadableBinary
+
+export function javyBinary(version: string = PREFERRED_JAVY_VERSION) {
+  return new Executable('javy', version, 'bytecodealliance/javy') as DownloadableBinary
 }
 
-export function functionRunnerBinary() {
-  if (!_functionRunner) {
-    _functionRunner = new Executable('function-runner', FUNCTION_RUNNER_VERSION, 'Shopify/function-runner')
+export function javyPluginBinary(version: string = PREFERRED_JAVY_PLUGIN_VERSION) {
+  return new JavyPlugin(version) as DownloadableBinary
+}
+
+export function functionRunnerBinary(version: string = PREFERRED_FUNCTION_RUNNER_VERSION) {
+  return new Executable('function-runner', version, 'Shopify/function-runner') as DownloadableBinary
+}
+
+export function wasmOptBinary() {
+  if (!_wasmOpt) {
+    _wasmOpt = new WasmOptExecutable('wasm-opt.cjs', BINARYEN_VERSION)
   }
-  return _functionRunner
+
+  return _wasmOpt
+}
+
+export function trampolineBinary() {
+  if (!_trampoline) {
+    _trampoline = new Executable(
+      'shopify-function-trampoline',
+      TRAMPOLINE_VERSION,
+      'Shopify/shopify-function-wasm-api',
+      `shopify_function_trampoline/${TRAMPOLINE_VERSION}`,
+    )
+  }
+  return _trampoline
 }
 
 export async function downloadBinary(bin: DownloadableBinary) {
@@ -146,7 +217,7 @@ export async function downloadBinary(bin: DownloadableBinary) {
   }
   await performActionWithRetryAfterRecovery(
     async () => {
-      const resp = await fetch(url)
+      const resp = await fetch(url, undefined, 'slow-request')
       if (resp.status !== 200) {
         throw new Error(`Downloading ${bin.name} failed with status code of ${resp.status}`)
       }

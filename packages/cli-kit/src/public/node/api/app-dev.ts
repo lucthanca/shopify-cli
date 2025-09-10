@@ -1,5 +1,6 @@
-import {graphqlRequestDoc} from './graphql.js'
-import {normalizeStoreFqdn} from '../context/fqdn.js'
+import {graphqlRequestDoc, UnauthorizedHandler} from './graphql.js'
+import {appDevFqdn, normalizeStoreFqdn} from '../context/fqdn.js'
+import {serviceEnvironment} from '../../../private/node/context/service.js'
 import Bottleneck from 'bottleneck'
 import {Variables} from 'graphql-request'
 import {TypedDocumentNode} from '@graphql-typed-document-node/core'
@@ -13,31 +14,45 @@ const limiter = new Bottleneck({
 })
 
 /**
- * Executes an org-scoped GraphQL query against the App Management API.
- * Uses typed documents.
- *
  * @param query - GraphQL query to execute.
  * @param shopFqdn - The shop fqdn.
  * @param token - Partners token.
  * @param variables - GraphQL variables to pass to the query.
+ * @param unauthorizedHandler - Unauthorized handler to use.
+ */
+export interface AppDevRequestOptions<TResult, TVariables extends Variables> {
+  query: TypedDocumentNode<TResult, TVariables>
+  shopFqdn: string
+  token: string
+  unauthorizedHandler: UnauthorizedHandler
+  variables?: TVariables
+}
+/**
+ * Executes an org-scoped GraphQL query against the App Management API.
+ * Uses typed documents.
+ *
+ * @param options - The options for the request.
  * @returns The response of the query of generic type <T>.
  */
-export async function appDevRequest<TResult, TVariables extends Variables>(
-  query: TypedDocumentNode<TResult, TVariables>,
-  shopFqdn: string,
-  token: string,
-  variables?: TVariables,
+export async function appDevRequestDoc<TResult, TVariables extends Variables>(
+  options: AppDevRequestOptions<TResult, TVariables>,
 ): Promise<TResult> {
   const api = 'App Dev'
-  const normalizedShopFqdn = await normalizeStoreFqdn(shopFqdn)
-  const url = `https://${normalizedShopFqdn}/app_dev/unstable/graphql.json`
+  const normalizedShopFqdn = await normalizeStoreFqdn(options.shopFqdn)
+  const fqdn = await appDevFqdn(normalizedShopFqdn)
+  const url = `https://${fqdn}/app_dev/unstable/graphql.json`
+
+  const addedHeaders = serviceEnvironment() === 'local' ? {'x-forwarded-host': normalizedShopFqdn} : undefined
+
   const result = limiter.schedule<TResult>(() =>
     graphqlRequestDoc<TResult, TVariables>({
-      query,
+      query: options.query,
       api,
       url,
-      token,
-      variables,
+      token: options.token,
+      addedHeaders,
+      variables: options.variables,
+      unauthorizedHandler: options.unauthorizedHandler,
     }),
   )
 

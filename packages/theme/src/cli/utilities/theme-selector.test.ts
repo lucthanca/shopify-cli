@@ -1,11 +1,11 @@
 import {fetchStoreThemes} from './theme-selector/fetch.js'
-import {findOrSelectTheme, findThemes, newThemeOption} from './theme-selector.js'
+import {findOrSelectTheme, findThemeById, findThemes, newThemeOption} from './theme-selector.js'
 import {getDevelopmentTheme} from '../services/local-storage.js'
 import {test, describe, vi, expect} from 'vitest'
 import {renderAutocompletePrompt} from '@shopify/cli-kit/node/ui'
 import {Theme} from '@shopify/cli-kit/node/themes/types'
 import {promptThemeName} from '@shopify/cli-kit/node/themes/utils'
-import {createTheme} from '@shopify/cli-kit/node/themes/api'
+import {themeCreate} from '@shopify/cli-kit/node/themes/api'
 
 vi.mock('./theme-selector/fetch.js')
 vi.mock('../services/local-storage.js')
@@ -91,7 +91,7 @@ describe('findOrSelectTheme', () => {
 
     vi.mocked(renderAutocompletePrompt).mockResolvedValue(newThemeOption(session).value)
     vi.mocked(promptThemeName).mockResolvedValue(expectedThemeName)
-    vi.mocked(createTheme).mockResolvedValue(expectedTheme)
+    vi.mocked(themeCreate).mockResolvedValue(expectedTheme)
     vi.mocked(fetchStoreThemes).mockResolvedValue(storeThemes)
 
     // When
@@ -102,8 +102,34 @@ describe('findOrSelectTheme', () => {
     })
 
     // Then
-    expect(createTheme).toBeCalledWith({name: 'my new theme', role: 'unpublished'}, session)
+    expect(themeCreate).toBeCalledWith({name: 'my new theme', role: 'unpublished'}, session)
     expect(actualTheme).toBe(expectedTheme)
+  })
+})
+
+describe('findThemeById', () => {
+  test('returns theme when found by ID', async () => {
+    // Given
+    vi.mocked(fetchStoreThemes).mockResolvedValue(storeThemes)
+
+    // When
+    const theme = await findThemeById(session, '3')
+
+    // Then
+    expect(theme).toBe(storeThemes[2])
+    expect(theme?.id).toBe(3)
+    expect(theme?.name).toBe('theme 3')
+  })
+
+  test('returns undefined when theme not found', async () => {
+    // Given
+    vi.mocked(fetchStoreThemes).mockResolvedValue(storeThemes)
+
+    // When
+    const theme = await findThemeById(session, '1000')
+
+    // Then
+    expect(theme).toBeUndefined()
   })
 })
 

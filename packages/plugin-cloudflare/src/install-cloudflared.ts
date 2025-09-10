@@ -2,6 +2,7 @@
 // Install script for cloudflared, derived from https://github.com/JacobLinCool/node-cloudflared
 import {basename, dirname, joinPath} from '@shopify/cli-kit/node/path'
 import {outputDebug} from '@shopify/cli-kit/node/output'
+import {fetch} from '@shopify/cli-kit/node/http'
 import {
   chmod,
   fileExistsSync,
@@ -142,7 +143,7 @@ async function downloadFile(url: string, to: string) {
     mkdirSync(dirname(to))
   }
   const streamPipeline = util.promisify(pipeline)
-  const response = await fetch(url, {redirect: 'follow'})
+  const response = await fetch(url, {redirect: 'follow'}, 'slow-request')
   if (!response.ok || !response.body)
     throw new Error(`Couldn't download file ${url} (${response.status} ${response.statusText})`)
   const fileObject = createFileWriteStream(to)

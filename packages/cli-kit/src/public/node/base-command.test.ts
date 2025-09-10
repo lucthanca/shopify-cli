@@ -39,7 +39,10 @@ class MockCommand extends Command {
       default: 'default stringy',
     }),
     password: Flags.string({}),
-    environment: Flags.string({}),
+    environment: Flags.string({
+      multiple: true,
+      default: [],
+    }),
     nonTTYRequiredFlag: Flags.string({}),
     noRelease: Flags.boolean({}),
   }
@@ -66,9 +69,39 @@ class MockCommandWithRequiredFlagInNonTTY extends MockCommand {
   }
 }
 
+class MockCommandWithoutEnvironmentFlag extends Command {
+  /* eslint-disable @shopify/cli/command-flags-with-env */
+  static flags = {
+    ...globalFlags,
+    path: Flags.string({
+      parse: async (input) => resolvePath(input),
+      default: async () => cwd(),
+    }),
+    someString: Flags.string({}),
+  }
+  /* eslint-enable @shopify/cli/command-flags-with-env */
+
+  async run(): Promise<void> {
+    const {flags} = await this.parse(MockCommandWithoutEnvironmentFlag)
+    testResult = flags
+  }
+
+  async catch(error: Error): Promise<void> {
+    testError = error
+  }
+
+  environmentsFilename(): string {
+    return 'shopify.environments.toml'
+  }
+}
+
 const validEnvironment = {
   someString: 'stringy',
   someBoolean: true,
+}
+
+const defaultEnvironment = {
+  someString: 'default-string',
 }
 
 const validEnvironmentWithIrrelevantFlag = {
@@ -108,6 +141,7 @@ const environmentWithPassword = {
 const allEnvironments: Environments = {
   environments: {
     validEnvironment,
+    default: defaultEnvironment,
     validEnvironmentWithIrrelevantFlag,
     environmentWithIncorrectType,
     environmentWithExclusiveArguments,
@@ -137,22 +171,44 @@ describe('applying environments', async () => {
     expect(testResult).toEqual({
       path: resolvePath(path),
       someStringWithDefault: 'default stringy',
-      environment,
+      environment: [environment],
       ...envFlags,
     })
   }
 
-  runTestInTmpDir('does not apply a environment when none is specified', async (tmpDir: string) => {
+  runTestInTmpDir(
+    'does not apply a environment when none is specified and there is no default',
+    async (tmpDir: string) => {
+      // Given
+      const outputMock = mockAndCaptureOutput()
+      outputMock.clear()
+      await deleteDefaultEnvironment(tmpDir)
+
+      // When
+      await MockCommand.run(['--path', tmpDir])
+
+      // Then
+      expect(testResult).toMatchObject({
+        path: resolvePath(tmpDir),
+        someStringWithDefault: 'default stringy',
+        environment: [],
+      })
+      expect(outputMock.info()).toEqual('')
+    },
+  )
+
+  runTestInTmpDir('does not apply flags when multiple environments are specified', async (tmpDir: string) => {
     // Given
     const outputMock = mockAndCaptureOutput()
     outputMock.clear()
 
     // When
-    await MockCommand.run(['--path', tmpDir])
+    await MockCommand.run(['--path', tmpDir, '--environment', 'validEnvironment', '--environment', 'validEnvironment'])
 
     // Then
     expect(testResult).toEqual({
       path: resolvePath(tmpDir),
+      environment: ['validEnvironment', 'validEnvironment'],
       someStringWithDefault: 'default stringy',
     })
     expect(outputMock.info()).toEqual('')
@@ -180,6 +236,70 @@ describe('applying environments', async () => {
       "
     `)
   })
+
+  runTestInTmpDir('applies default environment when no environment is specified', async (tmpDir: string) => {
+    // Given
+    const outputMock = mockAndCaptureOutput()
+    outputMock.clear()
+
+    // When
+    await MockCommand.run(['--path', tmpDir])
+
+    // Then
+    expectFlags(tmpDir, 'default')
+    expect(outputMock.info()).toMatchInlineSnapshot(`
+      "╭─ info ───────────────────────────────────────────────────────────────────────╮
+      │                                                                              │
+      │  Using applicable flags from default environment:                            │
+      │                                                                              │
+      │    • someString: default-string                                              │
+      │                                                                              │
+      ╰──────────────────────────────────────────────────────────────────────────────╯
+      "
+    `)
+  })
+
+  describe('when the command does not support the environment flag', () => {
+    runTestInTmpDir('does not apply default environment', async (tmpDir: string) => {
+      // Given
+      const outputMock = mockAndCaptureOutput()
+      outputMock.clear()
+
+      // When
+      await MockCommandWithoutEnvironmentFlag.run(['--path', tmpDir])
+
+      // Then
+      expect(testResult).toMatchObject({
+        path: resolvePath(tmpDir),
+      })
+      expect(testResult.environment).toBeUndefined()
+    })
+  })
+
+  runTestInTmpDir(
+    'base Command does not apply environment specified via environment variable',
+    async (tmpDir: string) => {
+      // Given
+      const environmentName = 'validEnvironmentWithPassword'
+      const flagName = 'SHOPIFY_FLAG_ENVIRONMENT'
+      vi.stubEnv(flagName, environmentName)
+      await deleteDefaultEnvironment(tmpDir)
+
+      const outputMock = mockAndCaptureOutput()
+      outputMock.clear()
+
+      // When
+      await MockCommand.run(['--path', tmpDir])
+
+      // Then
+      expect(testResult.environment).toEqual([])
+      expect(testResult.password).toBeUndefined()
+      expect(testResult.someString).toBeUndefined()
+      expect(testResult.path).toEqual(resolvePath(tmpDir))
+      expect(testResult.someStringWithDefault).toEqual('default stringy')
+      expect(outputMock.info()).toEqual('')
+    },
+  )
 
   runTestInTmpDir('searches up recursively from path by default', async (tmpDir: string) => {
     // Given
@@ -222,7 +342,7 @@ describe('applying environments', async () => {
     // Then
     expect(testResult).toEqual({
       path: resolvePath(tmpDir),
-      environment: 'nonexistentEnvironment',
+      environment: ['nonexistentEnvironment'],
       someStringWithDefault: 'default stringy',
     })
   })
@@ -234,7 +354,7 @@ describe('applying environments', async () => {
     // Then
     expect(testResult).toEqual({
       path: resolvePath(tmpDir),
-      environment: 'validEnvironmentWithIrrelevantFlag',
+      environment: ['validEnvironmentWithIrrelevantFlag'],
       ...validEnvironment,
       someStringWithDefault: 'default stringy',
     })
@@ -383,6 +503,10 @@ describe('applying environments', async () => {
     await MockCommand.run()
 
     // Then
+    expect(testResult).toMatchObject({
+      environment: [],
+      someStringWithDefault: 'default stringy',
+    })
     expect(outputMock.warn()).toMatchInlineSnapshot(`
       "╭─ warning ────────────────────────────────────────────────────────────────────╮
       │                                                                              │
@@ -428,3 +552,10 @@ describe('applying environments', async () => {
     expect(outputMock.warn()).toMatchInlineSnapshot('""')
   })
 })
+
+const deleteDefaultEnvironment = async (tmpDir: string): Promise<void> => {
+  const clone = {...allEnvironments}
+  clone.environments = {...allEnvironments.environments}
+  delete clone.environments.default
+  await writeFile(joinPath(tmpDir, 'shopify.environments.toml'), encodeTOML({environments: clone} as any))
+}

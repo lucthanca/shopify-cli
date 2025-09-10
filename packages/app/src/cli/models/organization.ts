@@ -9,13 +9,13 @@ export enum OrganizationSource {
 export interface Organization {
   id: string
   businessName: string
-  source?: OrganizationSource
+  source: OrganizationSource
 }
 
 export interface MinimalAppIdentifiers {
-  id: string
   apiKey: string
   organizationId: string
+  id: string
 }
 
 export type MinimalOrganizationApp = MinimalAppIdentifiers & {
@@ -49,7 +49,7 @@ export type OrganizationApp = MinimalOrganizationApp & {
   }
   configuration?: AppConfigurationUsedByCli
   flags: Flag[]
-  developerPlatformClient?: DeveloperPlatformClient
+  developerPlatformClient: DeveloperPlatformClient
 }
 
 export interface OrganizationStore {
@@ -59,4 +59,5 @@ export interface OrganizationStore {
   shopName: string
   transferDisabled: boolean
   convertableToPartnerTest: boolean
+  provisionable: boolean
 }

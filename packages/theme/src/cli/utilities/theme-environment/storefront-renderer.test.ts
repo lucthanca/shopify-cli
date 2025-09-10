@@ -1,18 +1,9 @@
 import {render} from './storefront-renderer.js'
 import {DevServerRenderContext, DevServerSession} from './types.js'
 import {describe, expect, test, vi} from 'vitest'
-import {fetch} from '@shopify/cli-kit/node/http'
 
 vi.mock('@shopify/cli-kit/node/session')
-vi.mock('@shopify/cli-kit/node/http', async () => {
-  const actual: any = await vi.importActual('@shopify/cli-kit/node/http')
-  return {
-    ...actual,
-    fetch: vi.fn(),
-  }
-})
-
-const successResponse = {ok: true, status: 200, headers: {get: vi.fn(), delete: vi.fn()}} as any
+vi.stubGlobal('fetch', vi.fn())
 
 const session: DevServerSession = {
   token: 'admin_token_abc123',
@@ -43,18 +34,21 @@ const context: DevServerRenderContext = {
 describe('render', () => {
   test('renders using storefront API', async () => {
     // Given
-    vi.mocked(fetch).mockResolvedValue(successResponse)
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(null, {headers: {'Content-Type': 'application/json', something: 'else'}}),
+    )
 
     // When
     const response = await render(session, context)
 
     // Then
     expect(response.status).toEqual(200)
-    expect(response.headers.delete).toBeCalled()
+    expect(response.headers.get('Content-Type')).toEqual('application/json')
+    expect(response.headers.get('something')).toEqual('else')
     expect(fetch).toHaveBeenCalledWith(
       'https://store.myshopify.com/products/1?_fd=0&pb=0',
       expect.objectContaining({
-        method: 'POST',
+        method: 'GET',
         headers: expect.objectContaining({
           Authorization: 'Bearer token_111222333',
           Cookie: 'theme_cookie=abc; storefront_digest=00001111222233334444; _shopify_essential=:00112233445566778899:',
@@ -65,9 +59,41 @@ describe('render', () => {
     )
   })
 
+  test('preserves Content-Type header for JSON responses', async () => {
+    // Given
+    vi.mocked(fetch).mockResolvedValue(
+      new Response('{"test": "data"}', {headers: {'Content-Type': 'application/json', something: 'else'}}),
+    )
+
+    // When
+    const response = await render(session, context)
+
+    // Then
+    expect(response.status).toEqual(200)
+    expect(response.headers.get('Content-Type')).toEqual('application/json')
+    expect(response.headers.get('something')).toEqual('else')
+  })
+
+  test('removes Content-Type header for non-JSON responses', async () => {
+    // Given
+    vi.mocked(fetch).mockResolvedValue(
+      new Response('<html></html>', {headers: {'Content-Type': 'text/html', something: 'else'}}),
+    )
+
+    // When
+    const response = await render(session, context)
+
+    // Then
+    expect(response.status).toEqual(200)
+    expect(response.headers.get('Content-Type')).toBeNull()
+    expect(response.headers.get('something')).toEqual('else')
+  })
+
   test('renders using theme access API', async () => {
     // Given
-    vi.mocked(fetch).mockResolvedValue(successResponse)
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(null, {headers: {'Content-Type': 'application/json', something: 'else'}}),
+    )
     const themeKitAccessSession = {...session, token: 'shptka_abc123'}
 
     // When
@@ -75,11 +101,12 @@ describe('render', () => {
 
     // Then
     expect(response.status).toEqual(200)
-    expect(response.headers.delete).toBeCalled()
+    expect(response.headers.get('Content-Type')).toEqual('application/json')
+    expect(response.headers.get('something')).toEqual('else')
     expect(fetch).toHaveBeenCalledWith(
       'https://theme-kit-access.shopifyapps.com/cli/sfr/products/1?_fd=0&pb=0',
       expect.objectContaining({
-        method: 'POST',
+        method: 'GET',
         headers: expect.objectContaining({
           Cookie: 'theme_cookie=abc; storefront_digest=00001111222233334444; _shopify_essential=:00112233445566778899:',
           'X-Shopify-Shop': 'store.myshopify.com',
@@ -91,7 +118,7 @@ describe('render', () => {
     expect(fetch).toHaveBeenCalledWith(
       'https://theme-kit-access.shopifyapps.com/cli/sfr/products/1?_fd=0&pb=0',
       expect.objectContaining({
-        method: 'POST',
+        method: 'GET',
         headers: expect.not.objectContaining({
           'X-Special-Header': '200',
         }),
@@ -101,7 +128,7 @@ describe('render', () => {
 
   test('renders using the section_id', async () => {
     // Given
-    vi.mocked(fetch).mockResolvedValue(successResponse)
+    vi.mocked(fetch).mockResolvedValue(new Response())
 
     // When
     const response = await render(session, {
@@ -111,11 +138,10 @@ describe('render', () => {
 
     // Then
     expect(response.status).toEqual(200)
-    expect(response.headers.delete).toBeCalled()
     expect(fetch).toHaveBeenCalledWith(
       'https://store.myshopify.com/products/1?_fd=0&pb=0&section_id=sections--1__announcement-bar',
       expect.objectContaining({
-        method: 'POST',
+        method: 'GET',
         headers: expect.objectContaining({
           Authorization: 'Bearer token_111222333',
           Cookie: 'theme_cookie=abc; storefront_digest=00001111222233334444; _shopify_essential=:00112233445566778899:',
@@ -128,7 +154,7 @@ describe('render', () => {
 
   test('renders using the app_block_id', async () => {
     // Given
-    vi.mocked(fetch).mockResolvedValue(successResponse)
+    vi.mocked(fetch).mockResolvedValue(new Response())
 
     // When
     const response = await render(session, {
@@ -138,11 +164,10 @@ describe('render', () => {
 
     // Then
     expect(response.status).toEqual(200)
-    expect(response.headers.delete).toBeCalled()
     expect(fetch).toHaveBeenCalledWith(
       'https://store.myshopify.com/products/1?_fd=0&pb=0&app_block_id=00001111222233334444',
       expect.objectContaining({
-        method: 'POST',
+        method: 'GET',
         headers: expect.objectContaining({
           Authorization: 'Bearer token_111222333',
           Cookie: 'theme_cookie=abc; storefront_digest=00001111222233334444; _shopify_essential=:00112233445566778899:',
@@ -155,7 +180,7 @@ describe('render', () => {
 
   test('renders using the section_id when section_id and app_block_id are provided', async () => {
     // Given
-    vi.mocked(fetch).mockResolvedValue(successResponse)
+    vi.mocked(fetch).mockResolvedValue(new Response())
 
     // When
     const response = await render(session, {
@@ -166,11 +191,10 @@ describe('render', () => {
 
     // Then
     expect(response.status).toEqual(200)
-    expect(response.headers.delete).toBeCalled()
     expect(fetch).toHaveBeenCalledWith(
       'https://store.myshopify.com/products/1?_fd=0&pb=0&section_id=sections--1__announcement-bar',
       expect.objectContaining({
-        method: 'POST',
+        method: 'GET',
         headers: expect.objectContaining({
           Authorization: 'Bearer token_111222333',
           Cookie: 'theme_cookie=abc; storefront_digest=00001111222233334444; _shopify_essential=:00112233445566778899:',
@@ -183,7 +207,7 @@ describe('render', () => {
 
   test('renders using query parameters', async () => {
     // Given
-    vi.mocked(fetch).mockResolvedValue(successResponse)
+    vi.mocked(fetch).mockResolvedValue(new Response())
 
     // When
     const response = await render(session, {
@@ -196,11 +220,10 @@ describe('render', () => {
 
     // Then
     expect(response.status).toEqual(200)
-    expect(response.headers.delete).toBeCalled()
     expect(fetch).toHaveBeenCalledWith(
       'https://store.myshopify.com/products/1?_fd=0&pb=0&value=A&value=B',
       expect.objectContaining({
-        method: 'POST',
+        method: 'GET',
         headers: expect.objectContaining({
           Authorization: 'Bearer token_111222333',
           Cookie: 'theme_cookie=abc; storefront_digest=00001111222233334444; _shopify_essential=:00112233445566778899:',

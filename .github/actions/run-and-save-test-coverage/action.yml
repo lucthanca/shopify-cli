@@ -8,11 +8,11 @@ runs:
   using: "composite"
   steps:
     - name: Unit tests with coverage
-      run: pnpm nx run-many --all --skip-nx-cache --target=test:coverage --exclude=features --output-style=stream
+      run: pnpm vitest run --coverage --reporter json --outputFile ./coverage/report.json
       shell: bash
-    - name: Combine Jest coverages
-      run: npx istanbul-merge --out="coverage.raw.json" "packages/*/coverage/coverage-final.json"
-      shell: bash
+      env:
+        VITEST_MIN_THREADS: "1"
+        VITEST_MAX_THREADS: "4"
     - name: Convert coverage to Jest
       run: ./bin/save-coverage-file.js
       shell: bash

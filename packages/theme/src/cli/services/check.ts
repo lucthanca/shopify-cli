@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 import {fileExists, readFileSync, writeFile} from '@shopify/cli-kit/node/fs'
-import {outputInfo, outputSuccess} from '@shopify/cli-kit/node/output'
+import {outputResult, outputInfo, outputSuccess} from '@shopify/cli-kit/node/output'
 import {joinPath} from '@shopify/cli-kit/node/path'
 import {renderInfo} from '@shopify/cli-kit/node/ui'
 import {
@@ -142,6 +142,7 @@ export function sortOffenses(offenses: Offense[]): OffenseMap {
       acc[filePath] = []
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
     acc[filePath]!.push(offense)
     return acc
   }, {})
@@ -303,7 +304,7 @@ export async function outputActiveConfig(themeRoot: string, configPath?: string)
     // Dump out the active settings for all checks.
     ...settings,
   }
-  outputInfo(YAML.stringify(config))
+  outputResult(YAML.stringify(config))
 }
 
 export async function outputActiveChecks(root: string, configPath?: string) {
@@ -342,7 +343,7 @@ export async function outputActiveChecks(root: string, configPath?: string) {
     return acc
   }, {})
 
-  outputInfo(YAML.stringify(checksList))
+  outputResult(YAML.stringify(checksList))
 }
 
 interface ExtendedWriteStream extends NodeJS.WriteStream {

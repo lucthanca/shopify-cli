@@ -4,13 +4,15 @@ import {
   loadApp,
   loadDotEnv,
   parseConfigurationObject,
-  parseHumanReadableError,
   checkFolderIsValidApp,
   AppLoaderMode,
   getAppConfigurationState,
   loadConfigForAppCreation,
+  reloadApp,
+  loadHiddenConfig,
 } from './loader.js'
-import {LegacyAppSchema, WebConfigurationSchema} from './app.js'
+import {parseHumanReadableError} from './error-parsing.js'
+import {App, AppLinkedInterface, LegacyAppSchema, WebConfigurationSchema} from './app.js'
 import {DEFAULT_CONFIG, buildVersionedAppSchema, getWebhookConfig} from './app.test-data.js'
 import {configurationFileNames, blocks} from '../../constants.js'
 import metadata from '../../metadata.js'
@@ -29,16 +31,14 @@ import {
   PackageJson,
   pnpmWorkspaceFile,
 } from '@shopify/cli-kit/node/node-package-manager'
-import {inTemporaryDirectory, moveFile, mkdir, mkTmpDir, rmdir, writeFile} from '@shopify/cli-kit/node/fs'
+import {inTemporaryDirectory, moveFile, mkdir, mkTmpDir, rmdir, writeFile, readFile} from '@shopify/cli-kit/node/fs'
 import {joinPath, dirname, cwd, normalizePath} from '@shopify/cli-kit/node/path'
 import {platformAndArch} from '@shopify/cli-kit/node/os'
 import {outputContent, outputToken} from '@shopify/cli-kit/node/output'
 import {zod} from '@shopify/cli-kit/node/schema'
-import {mockAndCaptureOutput} from '@shopify/cli-kit/node/testing/output'
 import colors from '@shopify/cli-kit/node/colors'
-
-import {globalCLIVersion, localCLIVersion} from '@shopify/cli-kit/node/version'
-import {CLI_KIT_VERSION} from '@shopify/cli-kit/common/version'
+import {showMultipleCLIWarningIfNeeded} from '@shopify/cli-kit/node/multiple-installation-warning'
+import {AbortError} from '@shopify/cli-kit/node/error'
 
 vi.mock('../../services/local-storage.js')
 vi.mock('../../services/app/config/use.js')
@@ -49,6 +49,7 @@ vi.mock('@shopify/cli-kit/node/node-package-manager', async () => ({
   globalCLIVersion: vi.fn(),
 }))
 vi.mock('@shopify/cli-kit/node/version')
+vi.mock('@shopify/cli-kit/node/multiple-installation-warning')
 
 describe('load', () => {
   let specifications: ExtensionSpecification[] = []
@@ -327,46 +328,8 @@ wrong = "property"
     expect(app.usesWorkspaces).toBe(true)
   })
 
-  test('shows warning if using global CLI but app has local dependency', async () => {
+  test('checks for multiple CLI installations', async () => {
     // Given
-    vi.mocked(globalCLIVersion).mockResolvedValue('3.68.0')
-    const mockOutput = mockAndCaptureOutput()
-    await writeConfig(appConfiguration, {
-      workspaces: ['packages/*'],
-      name: 'my_app',
-      dependencies: {'@shopify/cli': '1.0.0'},
-      devDependencies: {},
-    })
-
-    // When
-    await loadTestingApp()
-
-    // Then
-    expect(mockOutput.info()).toMatchInlineSnapshot(`
-      "╭─ info ───────────────────────────────────────────────────────────────────────╮
-      │                                                                              │
-      │  Two Shopify CLI installations found – using local dependency                │
-      │                                                                              │
-      │  A global installation (v3.68.0) and a local dependency (v${CLI_KIT_VERSION}) were       │
-      │  detected.                                                                   │
-      │  We recommend removing the @shopify/cli and @shopify/app dependencies from   │
-      │  your package.json, unless you want to use different versions across         │
-      │  multiple apps.                                                              │
-      │                                                                              │
-      │  See Shopify CLI documentation. [1]                                          │
-      │                                                                              │
-      ╰──────────────────────────────────────────────────────────────────────────────╯
-      [1] https://shopify.dev/docs/apps/build/cli-for-apps#switch-to-a-global-executab
-      le-or-local-dependency
-      "
-    `)
-    mockOutput.clear()
-  })
-
-  test('doesnt show warning if there is no local dependency', async () => {
-    // Given
-    vi.mocked(localCLIVersion).mockResolvedValue(undefined)
-    const mockOutput = mockAndCaptureOutput()
     await writeConfig(appConfiguration, {
       workspaces: ['packages/*'],
       name: 'my_app',
@@ -378,8 +341,7 @@ wrong = "property"
     await loadTestingApp()
 
     // Then
-    expect(mockOutput.warn()).toBe('')
-    mockOutput.clear()
+    expect(showMultipleCLIWarningIfNeeded).toHaveBeenCalled()
   })
 
   test('identifies if the app uses pnpm workspaces', async () => {
@@ -442,7 +404,7 @@ wrong = "property"
 
     const blockConfiguration = `
       wrong = "my_extension"
-      type = "checkout_post_purchase"
+      type = "ui_extension"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -474,6 +436,41 @@ wrong = "property"
 
     // When
     await expect(loadTestingApp()).rejects.toThrow(/Invalid extension type "invalid_type"/)
+  })
+
+  test('loads only known extension types when mode is local', async () => {
+    // Given
+    await writeConfig(appConfiguration)
+
+    // Create two extensions: one known and one unknown
+    const knownBlockConfiguration = `
+      name = "my_extension"
+      type = "theme"
+      `
+    await writeBlockConfig({
+      blockConfiguration: knownBlockConfiguration,
+      name: 'my-known-extension',
+    })
+    await writeFile(joinPath(blockPath('my-known-extension'), 'index.js'), '')
+
+    const unknownBlockConfiguration = `
+      name = "unknown_extension"
+      type = "unknown_type"
+      `
+    await writeBlockConfig({
+      blockConfiguration: unknownBlockConfiguration,
+      name: 'my-unknown-extension',
+    })
+    await writeFile(joinPath(blockPath('my-unknown-extension'), 'index.js'), '')
+
+    // When
+    const app = await loadTestingApp({mode: 'local'})
+
+    // Then
+    expect(app.allExtensions).toHaveLength(1)
+    expect(app.allExtensions[0]!.configuration.name).toBe('my_extension')
+    expect(app.allExtensions[0]!.configuration.type).toBe('theme')
+    expect(app.errors).toBeUndefined()
   })
 
   test('throws if 2 or more extensions have the same handle', async () => {
@@ -797,9 +794,7 @@ wrong = "property"
 
     // Then
     expect(app.allExtensions).toHaveLength(2)
-    const extensions = app.allExtensions.sort((extA, extB) =>
-      extA.configuration.name < extB.configuration.name ? -1 : 1,
-    )
+    const extensions = app.allExtensions.sort((extA, extB) => (extA.name < extB.name ? -1 : 1))
     expect(extensions[0]!.configuration.name).toBe('my_extension_1')
     expect(extensions[0]!.idEnvironmentVariableName).toBe('SHOPIFY_MY_EXTENSION_1_ID')
     expect(extensions[1]!.configuration.name).toBe('my_extension_2')
@@ -845,9 +840,7 @@ wrong = "property"
 
     // Then
     expect(app.allExtensions).toHaveLength(2)
-    const extensions = app.allExtensions.sort((extA, extB) =>
-      extA.configuration.name < extB.configuration.name ? -1 : 1,
-    )
+    const extensions = app.allExtensions.sort((extA, extB) => (extA.name < extB.name ? -1 : 1))
     expect(extensions[0]!.configuration.name).toBe('my_extension_1')
     expect(extensions[0]!.configuration.type).toBe('checkout_post_purchase')
     expect(extensions[0]!.configuration.api_version).toBe('2022-07')
@@ -966,6 +959,11 @@ wrong = "property"
       [build]
       command = "make build"
       path = "dist/index.wasm"
+
+      # extra fields not included in the schema should be ignored
+      [[invalid_field]]
+      namespace = "my-namespace"
+      key = "my-key"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -1004,6 +1002,11 @@ wrong = "property"
         [[settings.fields]]
         type = "single_line_text_field"
         key = "your field key"
+
+      # extra fields not included in the schema should be ignored
+      [[invalid_field]]
+      namespace = "my-namespace"
+      key = "my-key"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -1067,6 +1070,11 @@ wrong = "property"
         name = "Display name"
         description = "A description of my field"
         required = true
+
+      # extra fields not included in the schema should be ignored
+      [[invalid_field]]
+      namespace = "my-namespace"
+      key = "my-key"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -1140,6 +1148,11 @@ wrong = "property"
       target = "checkout.fetch"
       input_query = "./input_query.graphql"
       export = "fetch"
+
+      # extra fields not included in the schema should be ignored
+      [[invalid_field]]
+      namespace = "my-namespace"
+      key = "my-key"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -1219,6 +1232,11 @@ wrong = "property"
       target = "checkout.fetch"
       input_query = "./input_query.graphql"
       export = "fetch"
+
+      # extra fields not included in the schema should be ignored
+      [[extensions.invalid_field]]
+      namespace = "my-namespace"
+      key = "my-key"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -1281,6 +1299,11 @@ wrong = "property"
       module = "./src/ActionExtension.js"
       target = "admin.product-details.action.render"
       [[extensions.metafields]]
+      namespace = "my-namespace"
+      key = "my-key"
+
+      # extra fields not included in the schema should be ignored
+      [[extensions.invalid_field]]
       namespace = "my-namespace"
       key = "my-key"
       `
@@ -1382,6 +1405,11 @@ wrong = "property"
         [[extensions.targeting]]
         target = "purchase.checkout.block.render"
         module = "./CheckoutDynamicRender.jsx"
+
+            # extra fields not included in the schema should be ignored
+      [[extensions.invalid_field]]
+      namespace = "my-namespace"
+      key = "my-key"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -1505,6 +1533,11 @@ wrong = "property"
       [[metafields]]
       namespace = "my-namespace"
       key = "my-key-2"
+
+      # extra fields not included in the schema should be ignored
+      [[invalid_field]]
+      namespace = "my-namespace"
+      key = "my-key"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -1551,6 +1584,11 @@ wrong = "property"
         'pos.home.tile.render',
         'pos.home.modal.render'
       ]
+
+      # extra fields not included in the schema should be ignored
+      [[invalid_field]]
+      namespace = "my-namespace"
+      key = "my-key"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -1597,6 +1635,11 @@ wrong = "property"
       key = "metafield-config"
 
       [[metafields]]
+      namespace = "my-namespace"
+      key = "my-key"
+
+      # extra fields not included in the schema should be ignored
+      [[invalid_field]]
       namespace = "my-namespace"
       key = "my-key"
       `
@@ -1657,6 +1700,11 @@ wrong = "property"
       name = "second"
       description = "description"
       type = "single_line_text_field"
+
+      # extra fields not included in the schema should be ignored
+      [[invalid_field]]
+      namespace = "my-namespace"
+      key = "my-key"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -1728,6 +1776,11 @@ wrong = "property"
       name = "second"
       description = "description"
       type = "single_line_text_field"
+
+      # extra fields not included in the schema should be ignored
+      [[invalid_field]]
+      namespace = "my-namespace"
+      key = "my-key"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -1818,6 +1871,11 @@ wrong = "property"
         key = "field_key_2"
         type = "number_integer"
         name = "field-name-2"
+
+      # extra fields not included in the schema should be ignored
+      [[invalid_field]]
+      namespace = "my-namespace"
+      key = "my-key"
       `
     await writeBlockConfig({
       blockConfiguration,
@@ -1999,6 +2057,7 @@ wrong = "property"
         auth: {
           redirect_urls: ['https://example.com/api/auth'],
         },
+        name: 'for-testing-webhooks',
       },
       // this is the webhooks extension
       {
@@ -2009,10 +2068,12 @@ wrong = "property"
             {topics: ['orders/delete'], uri: 'https://example.com'},
           ],
         },
+        name: 'for-testing-webhooks',
       },
       {
         application_url: 'https://example.com/lala',
         embedded: true,
+        name: 'for-testing-webhooks',
       },
       // this is a webhook subscription extension
       {
@@ -2065,9 +2126,7 @@ wrong = "property"
 
     // Then
     expect(app.allExtensions).toHaveLength(2)
-    const functions = app.allExtensions.sort((extA, extB) =>
-      extA.configuration.name < extB.configuration.name ? -1 : 1,
-    )
+    const functions = app.allExtensions.sort((extA, extB) => (extA.name < extB.name ? -1 : 1))
     expect(functions[0]!.configuration.name).toBe('my-function-1')
     expect(functions[1]!.configuration.name).toBe('my-function-2')
     expect(functions[0]!.idEnvironmentVariableName).toBe('SHOPIFY_MY_FUNCTION_1_ID')
@@ -2318,6 +2377,101 @@ wrong = "property"
     await expect(loadTestingApp()).rejects.toThrow()
   })
 
+  test('regenerates devApplicationURLs when reloading', async () => {
+    // Given
+    const appConfiguration = `
+      name = "my-app"
+      client_id = "12345"
+      application_url = "https://example.com"
+      embedded = true
+
+      [webhooks]
+      api_version = "2023-07"
+
+      [auth]
+      redirect_urls = ["https://example.com/auth"]
+
+      [app_proxy]
+      url = "https://example.com"
+      subpath = "updated"
+      prefix = "new"
+    `
+    await writeConfig(appConfiguration)
+
+    const blockConfiguration = `
+     api_version = "2022-07"
+
+      [[extensions]]
+      type = "flow_action"
+      handle = "handle-1"
+      name = "my_extension_1_flow"
+      description = "custom description"
+      runtime_url = "https://example.com"
+    `
+    await writeBlockConfig({
+      blockConfiguration,
+      name: 'my_extension_1',
+    })
+    await writeFile(joinPath(blockPath('my_extension_1'), 'index.js'), '')
+
+    // Create initial app
+    const app = (await loadApp({
+      directory: tmpDir,
+      specifications,
+      userProvidedConfigName: undefined,
+    })) as AppLinkedInterface
+
+    // Set some values that should be regenerated
+    const customDevUUID = 'custom-dev-uuid'
+    const customAppURLs = {
+      applicationUrl: 'http://custom.dev',
+      redirectUrlWhitelist: ['http://custom.dev/auth'],
+      appProxy: {
+        proxyUrl: 'https://example.com',
+        proxySubPath: 'initial',
+        proxySubPathPrefix: 'old',
+      },
+    }
+    app.allExtensions[0]!.devUUID = customDevUUID
+    app.setDevApplicationURLs(customAppURLs)
+
+    // When
+    const reloadedApp = await reloadApp(app)
+
+    // Then
+    expect(reloadedApp.allExtensions[0]?.devUUID).toBe(customDevUUID)
+    expect(reloadedApp.devApplicationURLs).toEqual({
+      applicationUrl: 'http://custom.dev',
+      redirectUrlWhitelist: [
+        'http://custom.dev/auth/callback',
+        'http://custom.dev/auth/shopify/callback',
+        'http://custom.dev/api/auth/callback',
+      ],
+      appProxy: {
+        proxyUrl: 'https://custom.dev',
+        proxySubPath: 'updated',
+        proxySubPathPrefix: 'new',
+      },
+    })
+    expect(reloadedApp.name).toBe(app.name)
+    expect(reloadedApp.packageManager).toBe(app.packageManager)
+    expect(reloadedApp.nodeDependencies).toEqual(app.nodeDependencies)
+    expect(reloadedApp.usesWorkspaces).toBe(app.usesWorkspaces)
+  })
+
+  test('call app.generateExtensionTypes', async () => {
+    // Given
+    await writeConfig(appConfiguration)
+    const generateTypesSpy = vi.spyOn(App.prototype, 'generateExtensionTypes')
+
+    // When
+    await loadTestingApp()
+
+    // Then
+    expect(generateTypesSpy).toHaveBeenCalled()
+    generateTypesSpy.mockRestore()
+  })
+
   const runningOnWindows = platformAndArch().platform === 'windows'
 
   test.skipIf(runningOnWindows)(
@@ -2424,6 +2578,58 @@ wrong = "property"
       expect.objectContaining({
         cmd_app_linked_config_git_tracked: true,
       }),
+    )
+  })
+
+  test('throws the correct error when multi-extension configuration is invalid', async () => {
+    // Given
+    await writeConfig(appConfiguration)
+
+    const blockConfiguration = `
+      api_version = "2022-07"
+      description = "global description"
+
+      [extensions]
+      type = "checkout_post_purchase"
+      name = "my_extension_1"
+      handle = "checkout-ext"
+      description = "custom description"
+      `
+    await writeBlockConfig({
+      blockConfiguration,
+      name: 'my_extension_1',
+    })
+    await writeFile(joinPath(blockPath('my_extension_1'), 'index.js'), '')
+
+    await expect(loadTestingApp()).rejects.toThrow(AbortError)
+  })
+
+  test('loads the app with an unsupported config property', async () => {
+    const linkedAppConfigurationWithExtraConfig = `
+    name = "for-testing"
+    client_id = "1234567890"
+    application_url = "https://example.com/lala"
+    embedded = true
+
+    [build]
+    include_config_on_deploy = true
+
+    [webhooks]
+    api_version = "2023-07"
+
+    [auth]
+    redirect_urls = [ "https://example.com/api/auth" ]
+
+    [something_else]
+    not_valid = true
+
+    [and_another]
+    bad = true
+    `
+    await writeConfig(linkedAppConfigurationWithExtraConfig)
+
+    await expect(loadTestingApp()).rejects.toThrow(
+      'Unsupported section(s) in app configuration: and_another, something_else',
     )
   })
 })
@@ -2608,46 +2814,25 @@ describe('parseConfigurationObject', () => {
       roles: 1,
     }
 
-    const errorObject = [
-      {
-        code: 'invalid_union',
-        unionErrors: [
-          {
-            issues: [
-              {
-                code: 'invalid_type',
-                expected: 'array',
-                received: 'number',
-                path: ['roles'],
-                message: 'Expected array, received number',
-              },
-            ],
-            name: 'ZodError',
-          },
-          {
-            issues: [
-              {
-                expected: "'frontend' | 'backend' | 'background'",
-                received: 'number',
-                code: 'invalid_type',
-                path: ['type'],
-                message: "Expected 'frontend' | 'backend' | 'background', received number",
-              },
-            ],
-            name: 'ZodError',
-          },
-        ],
-        path: [],
-        message: 'Invalid input',
-      },
-    ]
-    const expectedFormatted = outputContent`\n${outputToken.errorText(
-      'Validation errors',
-    )} in tmp:\n\n${parseHumanReadableError(errorObject)}`
     const abortOrReport = vi.fn()
     await parseConfigurationObject(WebConfigurationSchema, 'tmp', configurationObject, abortOrReport)
 
-    expect(abortOrReport).toHaveBeenCalledWith(expectedFormatted, {}, 'tmp')
+    // Verify the function was called and capture the actual error structure
+    expect(abortOrReport).toHaveBeenCalledOnce()
+    const callArgs = abortOrReport.mock.calls[0]!
+    const actualErrorMessage = callArgs[0]
+
+    // Convert TokenizedString to regular string for testing
+    const errorString = actualErrorMessage.value
+
+    // The enhanced union handling should show only the most relevant errors
+    // instead of showing all variants, making it much more user-friendly
+    expect(errorString).toContain('[roles]: Expected array, received number')
+
+    // Should NOT show the confusing union variant breakdown
+    expect(errorString).not.toContain('Union validation failed')
+    expect(errorString).not.toContain('Option 1:')
+    expect(errorString).not.toContain('Option 2:')
   })
 })
 
@@ -3183,6 +3368,21 @@ describe('getAppConfigurationState', () => {
       expect(state).toMatchObject(resultShouldContain)
     })
   })
+
+  test('raises validation error when AppSchema is missing client_id', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // We know this is a TOML file that follows the AppSchema because
+      // it can contain extra fields (something_extra). In LegacyAppSchema, all fields are optional.
+      // This content is also missing a client_id field which should throw a validation error.
+      const content = `something_extra = "some_value"`
+      const appConfigPath = joinPath(tmpDir, 'shopify.app.toml')
+      const packageJsonPath = joinPath(tmpDir, 'package.json')
+      await writeFile(appConfigPath, content)
+      await writeFile(packageJsonPath, '{}')
+
+      await expect(getAppConfigurationState(tmpDir, undefined)).rejects.toThrowError(/client_id/)
+    })
+  })
 })
 
 describe('loadConfigForAppCreation', () => {
@@ -3204,6 +3404,8 @@ describe('loadConfigForAppCreation', () => {
         isLaunchable: false,
         scopesArray: ['read_orders', 'write_products'],
         name: 'my-app',
+        directory: tmpDir,
+        isEmbedded: false,
       })
     })
   })
@@ -3236,6 +3438,8 @@ dev = "echo 'Hello, world!'"
         isLaunchable: true,
         scopesArray: ['write_products'],
         name: 'my-app',
+        directory: tmpDir,
+        isEmbedded: true,
       })
     })
   })
@@ -3271,6 +3475,8 @@ dev = "echo 'Hello, world!'"
         isLaunchable: true,
         scopesArray: ['write_products'],
         name: 'my-app',
+        directory: tmpDir,
+        isEmbedded: true,
       })
     })
   })
@@ -3295,6 +3501,8 @@ dev = "echo 'Hello, world!'"
         isLaunchable: false,
         scopesArray: ['read_orders', 'write_products'],
         name: 'my-app',
+        directory: tmpDir,
+        isEmbedded: false,
       })
     })
   })
@@ -3317,7 +3525,141 @@ dev = "echo 'Hello, world!'"
         isLaunchable: false,
         scopesArray: [],
         name: 'my-app',
+        directory: tmpDir,
+        isEmbedded: false,
       })
+    })
+  })
+})
+
+describe('loadHiddenConfig', () => {
+  test('returns empty object if no client_id in configuration', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const configuration = {
+        path: joinPath(tmpDir, 'shopify.app.toml'),
+        scopes: 'write_products',
+      }
+
+      // When
+      const got = await loadHiddenConfig(tmpDir, configuration)
+
+      // Then
+      expect(got).toEqual({})
+    })
+  })
+
+  test('returns empty object if hidden config file does not exist', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const configuration = {
+        path: joinPath(tmpDir, 'shopify.app.toml'),
+        client_id: '12345',
+      }
+      await writeFile(joinPath(tmpDir, '.gitignore'), '')
+
+      // When
+      const got = await loadHiddenConfig(tmpDir, configuration)
+
+      // Then
+      expect(got).toEqual({})
+
+      // Verify empty config file was created
+      const hiddenConfigPath = joinPath(tmpDir, '.shopify', 'project.json')
+      const fileContent = await readFile(hiddenConfigPath)
+      expect(JSON.parse(fileContent)).toEqual({})
+    })
+  })
+
+  test('returns config for client_id if hidden config file exists', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const configuration = {
+        path: joinPath(tmpDir, 'shopify.app.toml'),
+        client_id: '12345',
+      }
+      const hiddenConfigPath = joinPath(tmpDir, '.shopify', 'project.json')
+      await mkdir(dirname(hiddenConfigPath))
+      await writeFile(
+        hiddenConfigPath,
+        JSON.stringify({
+          '12345': {someKey: 'someValue'},
+          'other-id': {otherKey: 'otherValue'},
+        }),
+      )
+
+      // When
+      const got = await loadHiddenConfig(tmpDir, configuration)
+
+      // Then
+      expect(got).toEqual({someKey: 'someValue'})
+    })
+  })
+
+  test('returns empty object if client_id not found in existing hidden config', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const configuration = {
+        path: joinPath(tmpDir, 'shopify.app.toml'),
+        client_id: 'not-found',
+      }
+      const hiddenConfigPath = joinPath(tmpDir, '.shopify', 'project.json')
+      await mkdir(dirname(hiddenConfigPath))
+      await writeFile(
+        hiddenConfigPath,
+        JSON.stringify({
+          'other-id': {someKey: 'someValue'},
+        }),
+      )
+
+      // When
+      const got = await loadHiddenConfig(tmpDir, configuration)
+
+      // Then
+      expect(got).toEqual({})
+    })
+  })
+
+  test('returns config if hidden config has an old format with just a dev_store_url', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const configuration = {
+        path: joinPath(tmpDir, 'shopify.app.toml'),
+        client_id: 'not-found',
+      }
+      const hiddenConfigPath = joinPath(tmpDir, '.shopify', 'project.json')
+      await mkdir(dirname(hiddenConfigPath))
+      await writeFile(
+        hiddenConfigPath,
+        JSON.stringify({
+          dev_store_url: 'https://dev-store.myshopify.com',
+        }),
+      )
+
+      // When
+      const got = await loadHiddenConfig(tmpDir, configuration)
+
+      // Then
+      expect(got).toEqual({dev_store_url: 'https://dev-store.myshopify.com'})
+    })
+  })
+
+  test('returns empty object if hidden config file is invalid JSON', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const configuration = {
+        path: joinPath(tmpDir, 'shopify.app.toml'),
+        client_id: '12345',
+      }
+      const hiddenConfigPath = joinPath(tmpDir, '.shopify', 'project.json')
+      await mkdir(dirname(hiddenConfigPath))
+      await writeFile(hiddenConfigPath, 'invalid json')
+
+      // When
+      const got = await loadHiddenConfig(tmpDir, configuration)
+
+      // Then
+      expect(got).toEqual({})
     })
   })
 })

@@ -3,10 +3,16 @@ import {
   parseGitHubRepositoryURL,
   GithubRelease,
   parseGitHubRepositoryReference,
+  downloadGitHubRelease,
 } from './github.js'
-import {fetch} from './http.js'
-import {Response} from 'node-fetch'
+import {fetch, downloadFile} from './http.js'
+import {AbortError} from './error.js'
+import {testWithTempDir} from './testing/test-with-temp-dir.js'
+import {joinPath} from './path.js'
+import {readFile} from './fs.js'
+import {isExecutable} from 'is-executable'
 import {describe, expect, test, vi} from 'vitest'
+import {Response} from 'node-fetch'
 
 vi.mock('./http.js')
 
@@ -165,3 +171,63 @@ function createMockRelease(size = 1, mocks: Partial<GithubRelease> = {}): Github
     ...mocks,
   }))
 }
+
+describe('downloadGitHubRelease', () => {
+  const repo = 'testuser/testrepo'
+  const version = 'v1.0.0'
+  const asset = 'test-asset'
+
+  testWithTempDir('successfully downloads the release asset', async ({tempDir}) => {
+    // GIVEN
+    const downloadContent = 'hello'
+    const content = Buffer.from(downloadContent)
+    const mockResponse = {
+      ok: true,
+      arrayBuffer: vi.fn().mockResolvedValue(content),
+    }
+    vi.mocked(fetch).mockResolvedValue(mockResponse as any)
+
+    const binary = process.platform === 'win32' ? 'test-asset.exe' : 'test-asset'
+    const targetPath = joinPath(tempDir, 'downloads', binary)
+
+    // WHEN
+    await downloadGitHubRelease(repo, version, asset, targetPath)
+
+    // THEN
+    expect(fetch).toHaveBeenCalledWith(
+      `https://github.com/${repo}/releases/download/${version}/${asset}`,
+      undefined,
+      'slow-request',
+    )
+
+    const downloadedContent = await readFile(targetPath)
+    expect(downloadedContent).toEqual(downloadContent)
+
+    const downloadIsExecutable = await isExecutable(targetPath)
+    expect(downloadIsExecutable).toBeTruthy()
+  })
+
+  testWithTempDir('throws an AbortError when the network is down', async ({tempDir}) => {
+    // GIVEN
+    vi.mocked(downloadFile).mockRejectedValue(new Error('Network error'))
+    const targetPath = joinPath(tempDir, 'downloads', 'example')
+
+    // WHEN
+    const result = downloadGitHubRelease(repo, version, asset, targetPath)
+
+    // THEN
+    await expect(result).rejects.toThrow(AbortError)
+  })
+
+  testWithTempDir('throws an AbortError when the response is not ok', async ({tempDir}) => {
+    // GIVEN
+    vi.mocked(downloadFile).mockRejectedValue(new Error('Not Found'))
+    const targetPath = joinPath(tempDir, 'downloads', 'example')
+
+    // WHEN
+    const result = downloadGitHubRelease(repo, version, asset, targetPath)
+
+    // THEN
+    await expect(result).rejects.toThrow(AbortError)
+  })
+})

@@ -12,7 +12,7 @@ vi.mock('../context/fqdn.js')
 const mockedResult = 'OK'
 const appManagementFqdnValue = 'shopify.com'
 const orgId = Math.floor(Math.random() * 1000000000000).toString()
-const url = `https://${appManagementFqdnValue}/app_management/unstable/organizations/${orgId}/graphql.json`
+const url = `https://${appManagementFqdnValue}/app_management/unstable/graphql.json`
 
 const mockedToken = 'token'
 
@@ -27,7 +27,17 @@ describe('appManagementRequestDoc', () => {
 
     // When
     const query = 'query' as unknown as TypedDocumentNode<object, {variables: string}>
-    await appManagementRequestDoc(orgId, query, mockedToken, {variables: 'variables'})
+    await appManagementRequestDoc({
+      query,
+      token: mockedToken,
+      variables: {variables: 'variables'},
+      requestOptions: {requestMode: 'slow-request'},
+      cacheOptions: {cacheTTL: {hours: 1}, cacheExtraKey: `1234`},
+      unauthorizedHandler: {
+        type: 'token_refresh',
+        handler: vi.fn().mockResolvedValue({token: mockedToken}),
+      },
+    })
 
     // Then
     expect(graphqlRequestDoc).toHaveBeenLastCalledWith({
@@ -37,6 +47,12 @@ describe('appManagementRequestDoc', () => {
       token: mockedToken,
       variables: {variables: 'variables'},
       responseOptions: {onResponse: handleDeprecations},
+      cacheOptions: {cacheTTL: {hours: 1}, cacheExtraKey: `1234`},
+      preferredBehaviour: 'slow-request',
+      unauthorizedHandler: {
+        type: 'token_refresh',
+        handler: expect.any(Function),
+      },
     })
   })
 })

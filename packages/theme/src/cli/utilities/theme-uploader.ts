@@ -1,12 +1,13 @@
 import {partitionThemeFiles} from './theme-fs.js'
 import {rejectGeneratedStaticAssets} from './asset-checksum.js'
 import {renderTasksToStdErr} from './theme-ui.js'
-import {createSyncingCatchError} from './errors.js'
+import {createSyncingCatchError, renderThrownError} from './errors.js'
+import {triggerBrowserFullReload} from './theme-environment/hot-reload/server.js'
 import {AdminSession} from '@shopify/cli-kit/node/session'
 import {Result, Checksum, Theme, ThemeFileSystem} from '@shopify/cli-kit/node/themes/types'
-import {AssetParams, bulkUploadThemeAssets, deleteThemeAsset} from '@shopify/cli-kit/node/themes/api'
+import {AssetParams, bulkUploadThemeAssets, deleteThemeAssets} from '@shopify/cli-kit/node/themes/api'
 import {Task} from '@shopify/cli-kit/node/ui'
-import {outputDebug, outputInfo, outputNewline, outputWarn} from '@shopify/cli-kit/node/output'
+import {outputDebug} from '@shopify/cli-kit/node/output'
 
 interface UploadOptions {
   nodelete?: boolean
@@ -52,7 +53,7 @@ export function uploadTheme(
   const deleteJobPromise = uploadJobPromise
     .then((result) => result.promise)
     .then(() => reportFailedUploads(uploadResults))
-    .then(() => buildDeleteJob(remoteChecksums, themeFileSystem, theme, session, options))
+    .then(() => buildDeleteJob(remoteChecksums, themeFileSystem, theme, session, options, uploadResults))
 
   const workPromise = options?.deferPartialWork
     ? themeCreationPromise
@@ -131,6 +132,7 @@ function buildDeleteJob(
   theme: Theme,
   session: AdminSession,
   options: Pick<UploadOptions, 'nodelete'>,
+  uploadResults: Map<string, Result>,
 ): SyncJob {
   if (options.nodelete) {
     return {progress: {current: 0, total: 0}, promise: Promise.resolve()}
@@ -139,21 +141,32 @@ function buildDeleteJob(
   const remoteFilesToBeDeleted = getRemoteFilesToBeDeleted(remoteChecksums, themeFileSystem)
   const orderedFiles = orderFilesToBeDeleted(remoteFilesToBeDeleted)
 
-  let failedDeleteAttempts = 0
   const progress = {current: 0, total: orderedFiles.length}
-  const promise = Promise.all(
-    orderedFiles.map((file) =>
-      deleteThemeAsset(theme.id, file.key, session)
-        .catch((error: Error) => {
-          failedDeleteAttempts++
-          if (failedDeleteAttempts > 3) throw error
-          createSyncingCatchError(file.key, 'delete')(error)
-        })
-        .finally(() => {
-          progress.current++
-        }),
-    ),
-  ).then(() => {
+  if (orderedFiles.length === 0) {
+    return {progress, promise: Promise.resolve()}
+  }
+
+  const deleteBatches = []
+  for (let i = 0; i < orderedFiles.length; i += MAX_BATCH_FILE_COUNT) {
+    const batch = orderedFiles.slice(i, i + MAX_BATCH_FILE_COUNT)
+    const promise = deleteThemeAssets(
+      theme.id,
+      batch.map((file) => file.key),
+      session,
+    ).then((results) => {
+      results.forEach((result) => {
+        uploadResults.set(result.key, result)
+        if (!result.success) {
+          const errorMessage = result.errors?.asset?.map((err) => `-${err}`).join('\n')
+          createSyncingCatchError(result.key, 'delete')(new Error(`Failed to delete ${result.key}: ${errorMessage}`))
+        }
+      })
+      progress.current += batch.length
+    })
+    deleteBatches.push(promise)
+  }
+
+  const promise = Promise.all(deleteBatches).then(() => {
     progress.current = progress.total
   })
 
@@ -177,6 +190,7 @@ function orderFilesToBeDeleted(files: Checksum[]): Checksum[] {
     ...fileSets.otherJsonFiles,
     ...fileSets.sectionLiquidFiles,
     ...fileSets.blockLiquidFiles,
+    ...fileSets.layoutFiles,
     ...fileSets.otherLiquidFiles,
     ...fileSets.configFiles,
     ...fileSets.staticAssetFiles,
@@ -276,14 +290,16 @@ function selectUploadableFiles(themeFileSystem: ThemeFileSystem, remoteChecksums
  * We use this 2d array to batch files of the same type together
  * while maintaining the order between file types. The files with
  * dependencies we have are:
- * 1. Liquid sections need to be uploaded first
- * 2. JSON sections need to be uploaded afterward so they can reference Liquid sections
- * 3. JSON templates should be the next ones so they can reference sections
- * 4. Contextualized templates should be uploaded after as they are variations of templates
- * 5. Config files must be the last ones, but we need to upload config/settings_schema.json first, followed by config/settings_data.json
+ * 1. Layout files don't necessarily need to be the first, but they must uploaded before templates.
+ * 2. Liquid blocks need to be uploaded before sections
+ * 3. Liquid sections need to be uploaded afterwards
+ * 4. JSON sections need to be uploaded after sections
+ * 5. JSON templates need to be uploaded after all sections and layouts
+ * 6. Contextualized templates should be uploaded after as they are variations of templates
+ * 7. Config files must be the last ones, but we need to upload config/settings_schema.json first, followed by config/settings_data.json
  *
  * The files with no dependencies we have are:
- * - The other Liquid files (for example, snippets)
+ * - The other Liquid files (for example, snippets, and liquid templates)
  * - The other JSON files (for example, locales)
  * - The static assets
  *
@@ -299,6 +315,7 @@ function orderFilesToBeUploaded(files: ChecksumWithSize[]): {
     independentFiles: [fileSets.otherLiquidFiles, fileSets.otherJsonFiles, fileSets.staticAssetFiles],
     // Follow order of dependencies:
     dependentFiles: [
+      fileSets.layoutFiles,
       fileSets.blockLiquidFiles,
       fileSets.sectionLiquidFiles,
       fileSets.sectionJsonFiles,
@@ -370,7 +387,18 @@ async function uploadBatch(
   // store the results in uploadResults, overwriting any existing results
   results.forEach((result) => {
     uploadResults.set(result.key, result)
+    updateUploadErrors(result, localThemeFileSystem, themeId)
   })
+}
+
+export function updateUploadErrors(result: Result, localThemeFileSystem: ThemeFileSystem, themeId: number) {
+  if (result.success) {
+    localThemeFileSystem.uploadErrors.delete(result.key)
+  } else {
+    const errors = result.errors?.asset ?? ['Response was not successful.']
+    localThemeFileSystem.uploadErrors.set(result.key, errors)
+    triggerBrowserFullReload(themeId, result.key)
+  }
 }
 
 async function handleBulkUpload(
@@ -432,10 +460,8 @@ async function handleFailedUploads(
 function reportFailedUploads(uploadResults: Map<string, Result>) {
   for (const [key, result] of uploadResults.entries()) {
     if (!result.success) {
-      const errorMessage = result.errors?.asset?.map((err) => `-${err}`).join('\n')
-      outputWarn(`Failed to upload file ${key}:`)
-      outputInfo(`${errorMessage}`)
-      outputNewline()
+      const errorMessage = result.errors?.asset?.join('\n') ?? 'File upload failed'
+      renderThrownError(key, new Error(errorMessage))
     }
   }
 }

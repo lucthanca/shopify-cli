@@ -8,15 +8,14 @@ import {
   AppLogData,
 } from './types.js'
 import {DeveloperPlatformClient} from '../../utilities/developer-platform-client.js'
-import {AppLogsSubscribeVariables} from '../../api/graphql/subscribe_to_app_logs.js'
 import {AppInterface} from '../../models/app/app.js'
-import {fetch, Response} from '@shopify/cli-kit/node/http'
+import {AppLogsSubscribeMutationVariables} from '../../api/graphql/app-management/generated/app-logs-subscribe.js'
 import {outputDebug, outputWarn} from '@shopify/cli-kit/node/output'
-import {partnersFqdn} from '@shopify/cli-kit/node/context/fqdn'
 import {AbortError} from '@shopify/cli-kit/node/error'
 import camelcaseKeys from 'camelcase-keys'
 import {formatLocalDate} from '@shopify/cli-kit/common/string'
-import {CLI_KIT_VERSION} from '@shopify/cli-kit/common/version'
+import {useConcurrentOutputContext} from '@shopify/cli-kit/node/ui/components'
+import {Writable} from 'stream'
 
 export const POLLING_INTERVAL_MS = 450
 export const POLLING_ERROR_RETRY_INTERVAL_MS = 5 * 1000
@@ -91,57 +90,20 @@ export function parseNetworkAccessRequestExecutedPayload(payload: string): Netwo
   })
 }
 
-const generateFetchAppLogUrl = async (
-  cursor?: string,
-  filters?: {
-    status?: string
-    source?: string
-  },
-) => {
-  const fqdn = await partnersFqdn()
-  let url = `https://${fqdn}/app_logs/poll`
-
-  if (!cursor) {
-    return url
-  }
-
-  url += `?cursor=${cursor}`
-
-  if (filters?.status) {
-    url += `&status=${filters.status}`
-  }
-  if (filters?.source) {
-    url += `&source=${filters.source}`
-  }
-
-  return url
-}
-
-export const fetchAppLogs = async (
-  jwtToken: string,
-  cursor?: string,
-  filters?: {
-    status?: string
-    source?: string
-  },
-): Promise<Response> => {
-  const url = await generateFetchAppLogUrl(cursor, filters)
-  const userAgent = `Shopify CLI; v=${CLI_KIT_VERSION}`
-  const headers = {
-    Authorization: `Bearer ${jwtToken}`,
-    'User-Agent': userAgent,
-  }
-  return fetch(url, {
-    method: 'GET',
-    headers,
-  })
-}
-
 interface FetchAppLogsErrorOptions {
   response: ErrorResponse
   onThrottle: (retryIntervalMs: number) => void
   onUnknownError: (retryIntervalMs: number) => void
   onResubscribe: () => Promise<string>
+}
+
+export interface AppLogsOptions {
+  jwtToken: string
+  cursor?: string
+  filters?: {
+    status?: string
+    source?: string
+  }
 }
 
 export const handleFetchAppLogsError = async (
@@ -231,21 +193,38 @@ export const parseAppLogPayload = (payload: string, logType: string): any => {
 
 export const subscribeToAppLogs = async (
   developerPlatformClient: DeveloperPlatformClient,
-  variables: AppLogsSubscribeVariables,
+  variables: AppLogsSubscribeMutationVariables,
+  organizationId: string,
+  stdout?: Writable,
 ): Promise<string> => {
-  const result = await developerPlatformClient.subscribeToAppLogs(variables)
+  // Now try the subscription with the fresh token
+  const result = await developerPlatformClient.subscribeToAppLogs(variables, organizationId)
+
+  if (!result.appLogsSubscribe) {
+    throw new AbortError('Failed to subscribe to app logs: No response received')
+  }
+
   const {jwtToken, success, errors} = result.appLogsSubscribe
+
   outputDebug(`Token: ${jwtToken}\n`)
   outputDebug(`API Key: ${variables.apiKey}\n`)
+
   if (errors && errors.length > 0) {
     const errorOutput = errors.join(', ')
-    outputWarn(`Errors subscribing to app logs: ${errorOutput}`)
-    outputWarn('App log streaming is not available in this session.')
+    await useConcurrentOutputContext({stripAnsi: false}, () => {
+      outputWarn(`Errors subscribing to app logs: ${errorOutput}`, stdout)
+      outputWarn('App log streaming is not available in this session.', stdout)
+    })
     throw new AbortError(errorOutput)
   } else {
-    outputDebug(`Subscribed to App Events for shop ID(s) ${variables.shopIds.join(', ')}`)
-    outputDebug(`Success: ${success}\n`)
+    if (!jwtToken) {
+      throw new AbortError('Failed to subscribe to app logs: No response received')
+    }
+    const shopIdsArray = Array.isArray(variables.shopIds) ? variables.shopIds : [variables.shopIds]
+    outputDebug(`Subscribed to App Events for shop ID(s) ${shopIdsArray.join(', ')}`)
+    if (success !== undefined) outputDebug(`Success: ${success}\n`)
   }
+
   return jwtToken
 }
 

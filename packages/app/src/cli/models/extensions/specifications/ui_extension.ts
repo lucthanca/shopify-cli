@@ -1,12 +1,17 @@
 import {Asset, AssetIdentifier, ExtensionFeature, createExtensionSpecification} from '../specification.js'
-import {NewExtensionPointSchemaType, NewExtensionPointsSchema, BaseSchema} from '../schemas.js'
+import {NewExtensionPointSchemaType, NewExtensionPointsSchema, BaseSchema, MetafieldSchema} from '../schemas.js'
 import {loadLocalesConfig} from '../../../utilities/extensions/locales-configuration.js'
 import {getExtensionPointTargetSurface} from '../../../services/dev/extension/utilities.js'
+import {ExtensionInstance} from '../extension-instance.js'
 import {err, ok, Result} from '@shopify/cli-kit/node/result'
-import {fileExists} from '@shopify/cli-kit/node/fs'
-import {joinPath} from '@shopify/cli-kit/node/path'
+import {fileExists, findPathUp} from '@shopify/cli-kit/node/fs'
+import {dirname, joinPath, relativizePath} from '@shopify/cli-kit/node/path'
 import {outputContent, outputToken} from '@shopify/cli-kit/node/output'
 import {zod} from '@shopify/cli-kit/node/schema'
+import {AbortError} from '@shopify/cli-kit/node/error'
+import {createRequire} from 'module'
+
+const require = createRequire(import.meta.url)
 
 const dependency = '@shopify/checkout-ui-extensions'
 
@@ -34,8 +39,11 @@ const missingExtensionPointsMessage = 'No extension targets defined, add a `targ
 export type UIExtensionSchemaType = zod.infer<typeof UIExtensionSchema>
 
 export const UIExtensionSchema = BaseSchema.extend({
+  name: zod.string(),
+  type: zod.literal('ui_extension'),
   extension_points: NewExtensionPointsSchema.optional(),
   targeting: NewExtensionPointsSchema.optional(),
+  metafields: zod.array(MetafieldSchema).optional(),
 })
   .refine((config) => validatePoints(config), missingExtensionPointsMessage)
   .transform((config) => {
@@ -62,6 +70,7 @@ export const UIExtensionSchema = BaseSchema.extend({
         module: targeting.module,
         metafields: targeting.metafields ?? config.metafields ?? [],
         default_placement_reference: targeting.default_placement,
+        urls: targeting.urls ?? {},
         capabilities: targeting.capabilities,
         preloads: targeting.preloads ?? {},
         build_manifest: buildManifest,
@@ -99,9 +108,13 @@ const uiExtensionSpec = createExtensionSpecification({
     }
   },
   getBundleExtensionStdinContent: (config) => {
+    const shouldIncludeShopifyExtend = isRemoteDomExtension(config)
     const main = config.extension_points
-      .map(({module}) => {
-        return `import '${module}'; `
+      .map(({target, module}, index) => {
+        if (shouldIncludeShopifyExtend) {
+          return `import Target_${index} from '${module}';shopify.extend('${target}', (...args) => Target_${index}(...args));`
+        }
+        return `import '${module}';`
       })
       .join('\n')
 
@@ -116,7 +129,11 @@ const uiExtensionSpec = createExtensionSpecification({
         assets[identifier] = {
           identifier: identifier as AssetIdentifier,
           outputFileName: asset.filepath,
-          content: `import '${asset.module}'`,
+          content: shouldIncludeShopifyExtend
+            ? `import shouldRender from '${asset.module}';shopify.extend('${getShouldRenderTarget(
+                extensionPoint.target,
+              )}', (...args) => shouldRender(...args));`
+            : `import '${asset.module}'`,
         }
       })
     })
@@ -133,6 +150,55 @@ const uiExtensionSpec = createExtensionSpecification({
         return extensionPoint.target === requestedTarget
       }) !== undefined
     )
+  },
+  contributeToSharedTypeFile: async (extension, typeDefinitionsByFile) => {
+    if (!isRemoteDomExtension(extension.configuration)) {
+      return
+    }
+
+    const {configuration} = extension
+    for await (const extensionPoint of configuration.extension_points) {
+      const fullPath = joinPath(extension.directory, extensionPoint.module)
+      const exists = await fileExists(fullPath)
+      if (!exists) continue
+
+      const mainTsConfigDir = await findNearestTsConfigDir(fullPath, extension.directory)
+      if (!mainTsConfigDir) continue
+
+      const mainTypeFilePath = joinPath(mainTsConfigDir, 'shopify.d.ts')
+      const mainTypes = getSharedTypeDefinition(
+        fullPath,
+        mainTypeFilePath,
+        extensionPoint.target,
+        configuration.api_version,
+      )
+      if (mainTypes) {
+        const currentTypes = typeDefinitionsByFile.get(mainTypeFilePath) ?? new Set<string>()
+        currentTypes.add(mainTypes)
+        typeDefinitionsByFile.set(mainTypeFilePath, currentTypes)
+      }
+
+      if (extensionPoint.build_manifest.assets[AssetIdentifier.ShouldRender]?.module) {
+        const shouldRenderTsConfigDir = await findNearestTsConfigDir(
+          joinPath(extension.directory, extensionPoint.build_manifest.assets[AssetIdentifier.ShouldRender].module),
+          extension.directory,
+        )
+        if (!shouldRenderTsConfigDir) continue
+
+        const shouldRenderTypeFilePath = joinPath(shouldRenderTsConfigDir, 'shopify.d.ts')
+        const shouldRenderTypes = getSharedTypeDefinition(
+          joinPath(extension.directory, extensionPoint.build_manifest.assets[AssetIdentifier.ShouldRender].module),
+          shouldRenderTypeFilePath,
+          getShouldRenderTarget(extensionPoint.target),
+          configuration.api_version,
+        )
+        if (shouldRenderTypes) {
+          const currentTypes = typeDefinitionsByFile.get(shouldRenderTypeFilePath) ?? new Set<string>()
+          currentTypes.add(shouldRenderTypes)
+          typeDefinitionsByFile.set(shouldRenderTypeFilePath, currentTypes)
+        }
+      }
+    }
   },
 })
 
@@ -196,6 +262,59 @@ Please check the module path for ${target}`.value,
     return err(errors.join('\n\n'))
   }
   return ok({})
+}
+
+function isRemoteDomExtension(
+  config: ExtensionInstance['configuration'],
+): config is ExtensionInstance<{api_version: string}>['configuration'] {
+  const apiVersion = config.api_version
+  const [year, month] = apiVersion?.split('-').map((part: string) => parseInt(part, 10)) ?? []
+  if (!year || !month) {
+    return false
+  }
+
+  return year > 2025 || (year === 2025 && month >= 10)
+}
+
+export function getShouldRenderTarget(target: string) {
+  return target.replace(/\.render$/, '.should-render')
+}
+
+function convertApiVersionToSemver(apiVersion: string): string {
+  const [year, month] = apiVersion.split('-')
+  if (!year || !month) {
+    throw new AbortError('Invalid API version format. Expected format: YYYY-MM')
+  }
+  return `${year}.${month}.0`
+}
+
+function getSharedTypeDefinition(fullPath: string, typeFilePath: string, target: string, apiVersion: string) {
+  try {
+    // Check if target types can be found
+    // We try to resolve from the module's path first with the app root as the fallback in case dependencies are hoisted to the shared workspace
+    require.resolve(`@shopify/ui-extensions/${target}`, {paths: [fullPath, typeFilePath]})
+
+    return `//@ts-ignore\ndeclare module './${relativizePath(fullPath, dirname(typeFilePath))}' {
+  const shopify: import('@shopify/ui-extensions/${target}').Api;
+  const globalThis: { shopify: typeof shopify };
+}\n`
+  } catch (_) {
+    throw new AbortError(
+      `Type reference for ${target} could not be found. You might be using the wrong @shopify/ui-extensions version.`,
+      `Fix the error by ensuring you have the correct version of @shopify/ui-extensions, for example ${convertApiVersionToSemver(
+        apiVersion,
+      )}, in your dependencies.`,
+    )
+  }
+}
+
+async function findNearestTsConfigDir(fromFile: string, extensionDirectory: string): Promise<string | undefined> {
+  const fromDirectory = dirname(fromFile)
+  const tsconfigPath = await findPathUp('tsconfig.json', {cwd: fromDirectory, type: 'file', stopAt: extensionDirectory})
+
+  if (tsconfigPath) {
+    return dirname(tsconfigPath)
+  }
 }
 
 export default uiExtensionSpec

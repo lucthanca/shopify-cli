@@ -1,8 +1,8 @@
 import {getLocalization} from './localization.js'
 import {Asset, DevNewExtensionPointSchema, UIExtensionPayload} from './payload/models.js'
 import {getExtensionPointTargetSurface} from './utilities.js'
+import {ExtensionsPayloadStoreOptions} from './payload/store.js'
 import {getUIExtensionResourceURL} from '../../../utilities/extensions/configuration.js'
-import {ExtensionDevOptions} from '../extension.js'
 import {getUIExtensionRendererVersion} from '../../../models/app/app.js'
 import {ExtensionInstance} from '../../../models/extensions/extension-instance.js'
 import {BuildManifest} from '../../../models/extensions/specifications/ui_extension.js'
@@ -10,7 +10,7 @@ import {fileLastUpdatedTimestamp} from '@shopify/cli-kit/node/fs'
 import {useConcurrentOutputContext} from '@shopify/cli-kit/node/ui/components'
 import {dirname, joinPath} from '@shopify/cli-kit/node/path'
 
-export type GetUIExtensionPayloadOptions = Omit<ExtensionDevOptions, 'appWatcher'> & {
+export type GetUIExtensionPayloadOptions = Omit<ExtensionsPayloadStoreOptions, 'appWatcher'> & {
   currentDevelopmentPayload?: Partial<UIExtensionPayload['development']>
   currentLocalizationPayload?: UIExtensionPayload['localization']
 }
@@ -24,10 +24,17 @@ export async function getUIExtensionPayload(
     const extensionOutputPath = extension.getOutputPathForDirectory(bundlePath)
     const url = `${options.url}/extensions/${extension.devUUID}`
     const {localization, status: localizationStatus} = await getLocalization(extension, options)
-
     const renderer = await getUIExtensionRendererVersion(extension)
-
     const extensionPoints = await getExtensionPoints(extension, url)
+
+    let metafields: {namespace: string; key: string}[] | null = null
+    if (
+      'metafields' in extension.configuration &&
+      Array.isArray(extension.configuration.metafields) &&
+      extension.configuration.metafields.length > 0
+    ) {
+      metafields = extension.configuration.metafields
+    }
 
     const defaultConfig = {
       assets: {
@@ -38,32 +45,32 @@ export async function getUIExtensionPayload(
         },
       },
       capabilities: {
-        blockProgress: extension.configuration.capabilities?.block_progress || false,
-        networkAccess: extension.configuration.capabilities?.network_access || false,
-        apiAccess: extension.configuration.capabilities?.api_access || false,
+        blockProgress: extension.configuration.capabilities?.block_progress ?? false,
+        networkAccess: extension.configuration.capabilities?.network_access ?? false,
+        apiAccess: extension.configuration.capabilities?.api_access ?? false,
         collectBuyerConsent: {
-          smsMarketing: extension.configuration.capabilities?.collect_buyer_consent?.sms_marketing || false,
-          customerPrivacy: extension.configuration.capabilities?.collect_buyer_consent?.customer_privacy || false,
+          smsMarketing: extension.configuration.capabilities?.collect_buyer_consent?.sms_marketing ?? false,
+          customerPrivacy: extension.configuration.capabilities?.collect_buyer_consent?.customer_privacy ?? false,
         },
         iframe: {
-          sources: extension.configuration.capabilities?.iframe?.sources || [],
+          sources: extension.configuration.capabilities?.iframe?.sources ?? [],
         },
       },
       development: {
         ...options.currentDevelopmentPayload,
-        resource: getUIExtensionResourceURL(extension.configuration.type, options),
+        resource: getUIExtensionResourceURL(extension.type, options),
         root: {
           url,
         },
-        hidden: options.currentDevelopmentPayload?.hidden || false,
+        hidden: options.currentDevelopmentPayload?.hidden ?? false,
         localizationStatus,
-        status: options.currentDevelopmentPayload?.status || 'success',
-        ...(options.currentDevelopmentPayload || {status: 'success'}),
+        status: options.currentDevelopmentPayload?.status ?? 'success',
+        ...(options.currentDevelopmentPayload ?? {status: 'success'}),
       },
       extensionPoints,
       localization: localization ?? null,
-      metafields: extension.configuration.metafields.length === 0 ? null : extension.configuration.metafields,
-      type: extension.configuration.type,
+      metafields,
+      type: extension.type,
 
       externalType: extension.externalType,
       uuid: extension.devUUID,
@@ -73,9 +80,9 @@ export async function getUIExtensionPayload(
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
       version: renderer?.version,
-      title: extension.configuration.name,
+      title: extension.name,
       handle: extension.handle,
-      name: extension.configuration.name,
+      name: extension.name,
       description: extension.configuration.description,
       apiVersion: extension.configuration.api_version,
       approvalScopes: options.grantedScopes,
@@ -86,7 +93,12 @@ export async function getUIExtensionPayload(
 }
 
 async function getExtensionPoints(extension: ExtensionInstance, url: string) {
-  const extensionPoints = extension.configuration.extension_points as DevNewExtensionPointSchema[]
+  let extensionPoints = extension.configuration.extension_points as DevNewExtensionPointSchema[]
+
+  if (extension.type === 'checkout_post_purchase') {
+    // Mock target for post-purchase in order to get the right extension point redirect url
+    extensionPoints = [{target: 'purchase.post.render'}] as DevNewExtensionPointSchema[]
+  }
 
   if (isNewExtensionPointsSchema(extensionPoints)) {
     return Promise.all(

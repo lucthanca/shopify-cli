@@ -1,6 +1,9 @@
-import {GraphQLResponse, graphqlRequestDoc} from './graphql.js'
+import {CacheOptions, GraphQLResponse, UnauthorizedHandler, graphqlRequestDoc} from './graphql.js'
+import {addCursorAndFiltersToAppLogsUrl} from './utilities.js'
 import {appManagementFqdn} from '../context/fqdn.js'
 import {setNextDeprecationDate} from '../../../private/node/context/deprecations-store.js'
+import {buildHeaders} from '../../../private/node/api/headers.js'
+import {RequestModeInput} from '../http.js'
 import Bottleneck from 'bottleneck'
 import {TypedDocumentNode} from '@graphql-typed-document-node/core'
 import {Variables} from 'graphql-request'
@@ -13,10 +16,10 @@ const limiter = new Bottleneck({
   maxConcurrent: 10,
 })
 
-async function setupRequest(orgId: string, token: string) {
+async function setupRequest(token: string) {
   const api = 'App Management'
   const fqdn = await appManagementFqdn()
-  const url = `https://${fqdn}/app_management/unstable/organizations/${orgId}/graphql.json`
+  const url = `https://${fqdn}/app_management/unstable/graphql.json`
   return {
     token,
     api,
@@ -25,31 +28,71 @@ async function setupRequest(orgId: string, token: string) {
   }
 }
 
+export const appManagementHeaders = (token: string): {[key: string]: string} => {
+  return buildHeaders(token)
+}
+
+export const appManagementAppLogsUrl = async (
+  organizationId: string,
+  cursor?: string,
+  filters?: {
+    status?: string
+    source?: string
+  },
+): Promise<string> => {
+  const fqdn = await appManagementFqdn()
+  const url = `https://${fqdn}/app_management/unstable/organizations/${organizationId}/app_logs/poll`
+  return addCursorAndFiltersToAppLogsUrl(url, cursor, filters)
+}
+
+export interface RequestOptions {
+  requestMode: RequestModeInput
+}
+
 /**
- * Executes an org-scoped GraphQL query against the App Management API. Uses typed documents.
- *
  * @param orgId - The organization ID.
  * @param query - GraphQL query to execute.
  * @param token - Partners token.
  * @param variables - GraphQL variables to pass to the query.
+ * @param cacheOptions - Cache options for the request. If not present, the request will not be cached.
+ * @param requestOptions - Preferred behaviour for the request.
+ * @param unauthorizedHandler - Optional handler for unauthorized requests.
+ */
+export interface AppManagementRequestOptions<TResult, TVariables extends Variables> {
+  query: TypedDocumentNode<TResult, TVariables>
+  token: string
+  variables?: TVariables
+  cacheOptions?: CacheOptions
+  requestOptions?: RequestOptions
+  unauthorizedHandler: UnauthorizedHandler
+}
+
+/**
+ * Executes an org-scoped GraphQL query against the App Management API. Uses typed documents.
+ *
+ * @param options - The options for the request.
  * @returns The response of the query of generic type <T>.
  */
 export async function appManagementRequestDoc<TResult, TVariables extends Variables>(
-  orgId: string,
-  query: TypedDocumentNode<TResult, TVariables>,
-  token: string,
-  variables?: TVariables,
+  options: AppManagementRequestOptions<TResult, TVariables>,
 ): Promise<TResult> {
+  const cacheExtraKey = options.cacheOptions?.cacheExtraKey ?? ''
+  const newCacheOptions = options.cacheOptions ? {...options.cacheOptions, cacheExtraKey} : undefined
+
   const result = limiter.schedule<TResult>(async () =>
     graphqlRequestDoc<TResult, TVariables>({
-      ...(await setupRequest(orgId, token)),
-      query,
-      variables,
+      ...(await setupRequest(options.token)),
+      query: options.query,
+      variables: options.variables,
+      cacheOptions: newCacheOptions,
+      preferredBehaviour: options.requestOptions?.requestMode,
+      unauthorizedHandler: options.unauthorizedHandler,
     }),
   )
 
   return result
 }
+
 interface Deprecation {
   supportedUntilDate?: string
 }

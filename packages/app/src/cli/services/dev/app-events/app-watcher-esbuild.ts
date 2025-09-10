@@ -1,10 +1,13 @@
 import {AppEvent, EventType} from './app-event-watcher.js'
 import {ExtensionInstance} from '../../../models/extensions/extension-instance.js'
 import {getESBuildOptions} from '../../extensions/bundle.js'
+import {environmentVariableNames} from '../../../constants.js'
 import {BuildContext, context as esContext, StdinOptions} from 'esbuild'
 import {AbortSignal} from '@shopify/cli-kit/node/abort'
 import {copyFile} from '@shopify/cli-kit/node/fs'
 import {dirname, joinPath} from '@shopify/cli-kit/node/path'
+import {isTruthy} from '@shopify/cli-kit/node/context/utilities'
+import {getEnvironmentVariables} from '@shopify/cli-kit/node/environment'
 
 export interface DevAppWatcherOptions {
   dotEnvVariables: {[key: string]: string}
@@ -66,14 +69,14 @@ export class ESBuildContextManager {
         return esContext(esbuildOptions)
       })
 
-      this.contexts[extension.handle] = await Promise.all(assetContextPromises.concat(mainContextPromise))
+      this.contexts[extension.uid] = await Promise.all(assetContextPromises.concat(mainContextPromise))
     })
 
     await Promise.all(promises)
   }
 
   async rebuildContext(extension: ExtensionInstance) {
-    const context = this.contexts[extension.handle]
+    const context = this.contexts[extension.uid]
     if (!context) return
     await Promise.all(context.map((ctxt) => ctxt.rebuild()))
 
@@ -88,10 +91,16 @@ export class ESBuildContextManager {
     await copyFile(outputPath, copyPath)
   }
 
+  /**
+   * New contexts are created for new extensions that were added during a dev session.
+   * We also need to recreate contexts for UI extensions whose TOML files were updated.
+   * This is because some changes in the TOML invalidate the current context (changing targets or handle for example)
+   */
   async updateContexts(appEvent: AppEvent) {
     this.dotEnvVariables = appEvent.app.dotenv?.variables ?? {}
     const createdEsBuild = appEvent.extensionEvents
-      .filter((extEvent) => extEvent.type === EventType.Created && extEvent.extension.isESBuildExtension)
+      .filter((extEvent) => extEvent.extension.isESBuildExtension)
+      .filter((extEvent) => extEvent.type === 'created' || (extEvent.type === 'changed' && appEvent.appWasReloaded))
       .map((extEvent) => extEvent.extension)
     await this.createContexts(createdEsBuild)
 
@@ -102,17 +111,20 @@ export class ESBuildContextManager {
   }
 
   async deleteContexts(extensions: ExtensionInstance[]) {
-    const promises = extensions.map((ext) => this.contexts[ext.handle]?.map((context) => context.dispose())).flat()
+    const promises = extensions.map((ext) => this.contexts[ext.uid]?.map((context) => context.dispose())).flat()
     await Promise.all(promises)
     extensions.forEach((ext) => {
-      const {[ext.handle]: _, ...rest} = this.contexts
+      const {[ext.uid]: _, ...rest} = this.contexts
       this.contexts = rest
     })
   }
 
   private async extensionEsBuildOptions(stdin: StdinOptions, outputPath: string) {
+    const env = getEnvironmentVariables()
+    const disableMinificationOnDev = env[environmentVariableNames.disableMinificationOnDev]
+    const minify = !isTruthy(disableMinificationOnDev)
     return getESBuildOptions({
-      minify: false,
+      minify,
       outputPath,
       environment: 'development',
       env: {

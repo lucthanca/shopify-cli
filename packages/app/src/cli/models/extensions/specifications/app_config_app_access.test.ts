@@ -74,4 +74,57 @@ describe('app_config_app_access', () => {
       })
     })
   })
+
+  describe('getDevSessionUpdateMessages', () => {
+    test('should return message with scopes when scopes are provided', async () => {
+      // Given
+      const config = {
+        access_scopes: {
+          scopes: 'read_products,write_products',
+        },
+        auth: {
+          redirect_urls: ['https://example.com/auth/callback'],
+        },
+      }
+
+      // When
+      const result = await spec.getDevSessionUpdateMessages!(config)
+
+      // Then
+      expect(result).toEqual(['Access scopes auto-granted: read_products, write_products'])
+    })
+
+    test('should return message with required_scopes when only required_scopes are provided', async () => {
+      // Given
+      const config = {
+        access_scopes: {
+          required_scopes: ['write_orders', 'read_inventory'],
+        },
+        auth: {
+          redirect_urls: ['https://example.com/auth/callback'],
+        },
+      }
+
+      // When
+      const result = await spec.getDevSessionUpdateMessages!(config)
+
+      // Then
+      expect(result).toEqual(['Access scopes auto-granted: write_orders, read_inventory'])
+    })
+
+    test('should return default message when no scopes are provided', async () => {
+      // Given
+      const config = {
+        auth: {
+          redirect_urls: ['https://example.com/auth/callback'],
+        },
+      }
+
+      // When
+      const result = await spec.getDevSessionUpdateMessages!(config)
+
+      // Then
+      expect(result).toEqual(['App has been installed'])
+    })
+  })
 })

@@ -6,7 +6,7 @@ import {
 } from './extension.js'
 import * as extensionsCommon from '../extensions/common.js'
 import {blocks, configurationFileNames} from '../../constants.js'
-import {loadApp} from '../../models/app/loader.js'
+import {loadApp, reloadApp} from '../../models/app/loader.js'
 import * as functionBuild from '../function/build.js'
 import {
   checkoutUITemplate,
@@ -16,6 +16,8 @@ import {
 import {ExtensionTemplate} from '../../models/app/template.js'
 import {ExtensionSpecification} from '../../models/extensions/specification.js'
 import {loadLocalExtensionsSpecifications} from '../../models/extensions/load-specifications.js'
+import {AppLinkedInterface} from '../../models/app/app.js'
+import {DeveloperPlatformClient} from '../../utilities/developer-platform-client.js'
 import {describe, expect, vi, test} from 'vitest'
 import * as output from '@shopify/cli-kit/node/output'
 import {
@@ -37,6 +39,22 @@ vi.mock('@shopify/cli-kit/node/node-package-manager', async () => {
     addNPMDependenciesIfNeeded: vi.fn(),
     addResolutionOrOverride: vi.fn(),
     installNodeModules: vi.fn(),
+  }
+})
+
+vi.mock('@shopify/cli-kit/node/system', async () => {
+  const actual: any = await vi.importActual('@shopify/cli-kit/node/system')
+  return {
+    ...actual,
+    exec: vi.fn().mockResolvedValue({stdout: '', stderr: ''}),
+  }
+})
+
+vi.mock('../../models/app/loader.js', async () => {
+  const actual: any = await vi.importActual('../../models/app/loader.js')
+  return {
+    ...actual,
+    reloadApp: vi.fn(),
   }
 })
 
@@ -246,6 +264,7 @@ describe('initialize a extension', async () => {
           name,
           handle: slugify(name),
           flavor,
+          uid: 'ba7c20a9-578d-6fee-8cd2-044af992dabd92d8bbfe',
         })
       })
     },
@@ -437,6 +456,88 @@ describe('initialize a extension', async () => {
       expect(file.fileExistsSync(joinPath(tmpDir, 'extensions', name))).toBeFalsy()
     })
   })
+
+  test('reloads the app after generating the extension', async () => {
+    await withTemporaryApp(async (tmpDir) => {
+      const downloadGitRepositorySpy = vi.spyOn(git, 'downloadGitRepository').mockResolvedValue()
+      vi.spyOn(extensionsCommon, 'ensureDownloadedExtensionFlavorExists').mockImplementationOnce(async () => tmpDir)
+
+      const name = 'my-ext-1'
+
+      const specification = checkoutUITemplate
+      const extensionFlavor = 'react'
+      await createFromTemplate({
+        name,
+        extensionTemplate: specification,
+        extensionFlavor,
+        appDirectory: tmpDir,
+        specifications,
+        developerPlatformClient: testDeveloperPlatformClient({
+          templateSpecifications: () =>
+            Promise.resolve({
+              templates: [
+                {
+                  identifier: 'ui_extension',
+                  name: 'UI Extension',
+                  defaultName: 'ui-extension',
+                  group: 'Merchant Admin',
+                  supportLinks: [],
+                  type: 'ui_extension',
+                  url: 'https://github.com/Shopify/extensions-templates',
+                  extensionPoints: [],
+                  supportedFlavors: [
+                    {
+                      name: 'JavaScript',
+                      value: 'vanilla-js',
+                    },
+                    {
+                      name: 'TypeScript',
+                      value: 'typescript',
+                    },
+                    {
+                      name: 'React',
+                      value: 'react',
+                    },
+                  ],
+                },
+              ],
+              groupOrder: [],
+            }),
+        }),
+      })
+
+      // Then
+      expect(vi.mocked(reloadApp)).toHaveBeenCalledOnce()
+    })
+  })
+
+  test('uses specification.url for the git repository URL by default', async () => {
+    await withTemporaryApp(async (tmpDir) => {
+      const downloadGitRepositorySpy = vi.spyOn(git, 'downloadGitRepository').mockResolvedValue()
+      vi.spyOn(extensionsCommon, 'ensureDownloadedExtensionFlavorExists').mockImplementationOnce(async () => tmpDir)
+
+      const name = 'my-ext-1'
+      const specification = allUITemplates.find((spec) => spec.identifier === 'checkout_ui')!
+      specification.url = 'default/template/url'
+      const extensionFlavor = 'vanilla-js'
+
+      // When
+      await createFromTemplate({
+        name,
+        extensionTemplate: specification,
+        extensionFlavor,
+        appDirectory: tmpDir,
+        specifications,
+      })
+
+      // Then
+      expect(downloadGitRepositorySpy).toHaveBeenCalledWith({
+        destination: expect.any(String),
+        repoUrl: specification.url,
+        shallow: true,
+      })
+    })
+  })
 })
 
 interface CreateFromTemplateOptions {
@@ -446,6 +547,7 @@ interface CreateFromTemplateOptions {
   extensionFlavor: ExtensionFlavorValue
   specifications: ExtensionSpecification[]
   onGetTemplateRepository?: (url: string, destination: string) => Promise<void>
+  developerPlatformClient?: DeveloperPlatformClient
 }
 async function createFromTemplate({
   name,
@@ -454,12 +556,17 @@ async function createFromTemplate({
   extensionFlavor,
   specifications,
   onGetTemplateRepository,
+  developerPlatformClient = testDeveloperPlatformClient(),
 }: CreateFromTemplateOptions): Promise<string> {
   const result = await generateExtensionTemplate({
     extensionTemplate: specification,
-    app: await loadApp({directory: appDirectory, specifications, userProvidedConfigName: undefined}),
+    app: (await loadApp({
+      directory: appDirectory,
+      specifications,
+      userProvidedConfigName: undefined,
+    })) as AppLinkedInterface,
     extensionChoices: {name, flavor: extensionFlavor},
-    developerPlatformClient: testDeveloperPlatformClient(),
+    developerPlatformClient,
     onGetTemplateRepository,
   })
   return result.directory

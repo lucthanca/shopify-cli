@@ -1,8 +1,15 @@
-mutation CreateApp($appSource: AppSourceInput!, $name: String!) {
-  appCreate(appSource: $appSource, name: $name) {
+mutation CreateApp($initialVersion: AppVersionInput!, $organizationId: ID!) {
+  appCreate(initialVersion: $initialVersion, organizationId: $organizationId) {
     app {
       id
       key
+      activeRoot {
+        clientCredentials {
+          secrets {
+            key
+          }
+        }
+      }
     }
     userErrors {
       category

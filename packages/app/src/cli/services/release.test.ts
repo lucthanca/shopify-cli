@@ -28,6 +28,7 @@ const APP: OrganizationApp = {
   redirectUrlWhitelist: [],
   apiSecretKeys: [],
   flags: [],
+  developerPlatformClient: testDeveloperPlatformClient(),
 }
 
 beforeEach(() => {
@@ -66,9 +67,7 @@ describe('release', () => {
 
       return {
         appRelease: {
-          appRelease: {
-            userErrors: [],
-          },
+          appRelease: {},
         },
       }
     })
@@ -167,6 +166,7 @@ function buildExtensionsBreakdown() {
       toCreate: [],
       toUpdate: [],
       fromDashboard: [],
+      unchanged: [],
     },
     versionDetails: {
       id: 1,

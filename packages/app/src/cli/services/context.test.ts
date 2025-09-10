@@ -2,13 +2,14 @@ import {fetchOrganizations, fetchOrgFromId} from './dev/fetch.js'
 import {selectOrCreateApp} from './dev/select-app.js'
 import {selectStore} from './dev/select-store.js'
 import {ensureDeploymentIdsPresence} from './context/identifiers.js'
-import {ensureDeployContext, ensureThemeExtensionDevContext} from './context.js'
+import {appFromIdentifiers, ensureDeployContext, ensureThemeExtensionDevContext} from './context.js'
 import {createExtension} from './dev/create-extension.js'
 import {CachedAppInfo} from './local-storage.js'
 import link from './app/config/link.js'
 import {fetchSpecifications} from './generate/fetch-extension-specifications.js'
-import * as patchAppConfigurationFile from './app/patch-app-configuration-file.js'
+import * as patchAppConfigurationFileModule from './app/patch-app-configuration-file.js'
 import {DeployOptions} from './deploy.js'
+import {isServiceAccount, isUserAccount} from './context/partner-account-info.js'
 import {
   MinimalAppIdentifiers,
   Organization,
@@ -21,19 +22,22 @@ import {selectOrganizationPrompt} from '../prompts/dev.js'
 import {
   DEFAULT_CONFIG,
   testDeveloperPlatformClient,
-  testApp,
   testAppWithConfig,
   testOrganizationApp,
   testThemeExtensions,
-  buildVersionedAppSchema,
 } from '../models/app/app.test-data.js'
 import metadata from '../metadata.js'
 import {AppConfigurationStateLinked, getAppConfigurationFileName, isWebType, loadApp} from '../models/app/loader.js'
-import {AppInterface, AppLinkedInterface} from '../models/app/app.js'
+import {AppLinkedInterface} from '../models/app/app.js'
 import * as loadSpecifications from '../models/extensions/load-specifications.js'
-import {DeveloperPlatformClient, selectDeveloperPlatformClient} from '../utilities/developer-platform-client.js'
+import {
+  allDeveloperPlatformClients,
+  DeveloperPlatformClient,
+  selectDeveloperPlatformClient,
+} from '../utilities/developer-platform-client.js'
 import {RemoteAwareExtensionSpecification} from '../models/extensions/specification.js'
 import {afterEach, beforeAll, beforeEach, describe, expect, test, vi} from 'vitest'
+import {AbortError} from '@shopify/cli-kit/node/error'
 import {mockAndCaptureOutput} from '@shopify/cli-kit/node/testing/output'
 import {getPackageManager} from '@shopify/cli-kit/node/node-package-manager'
 import {renderConfirmationPrompt, renderInfo, renderTasks, renderWarning, Task} from '@shopify/cli-kit/node/ui'
@@ -70,6 +74,7 @@ const STORE1: OrganizationStore = {
   shopName: 'store1',
   transferDisabled: true,
   convertableToPartnerTest: true,
+  provisionable: true,
 }
 
 const state: AppConfigurationStateLinked = {
@@ -94,13 +99,14 @@ const deployOptions = (app: AppLinkedInterface, reset = false, force = false): D
     force,
     noRelease: false,
     developerPlatformClient: buildDeveloperPlatformClient(),
+    skipBuild: false,
   }
 }
 
 function buildDeveloperPlatformClient(extras?: Partial<DeveloperPlatformClient>): DeveloperPlatformClient {
   return testDeveloperPlatformClient({
     ...extras,
-    async appFromId({apiKey}: MinimalAppIdentifiers) {
+    async appFromIdentifiers(apiKey: string) {
       for (const app of [APP1, APP2]) {
         if (apiKey === app.apiKey) return app
       }
@@ -135,6 +141,13 @@ vi.mock('./context/partner-account-info.js')
 vi.mock('./generate/fetch-extension-specifications.js')
 vi.mock('./app/select-app.js')
 vi.mock('../utilities/developer-platform-client.js')
+vi.mock('./app/patch-app-configuration-file.js', () => {
+  return {
+    patchAppConfigurationFile: vi.fn(),
+    setAppConfigValue: vi.fn(),
+    unsetAppConfigValue: vi.fn(),
+  }
+})
 
 beforeAll(async () => {
   const localSpecs = await loadSpecifications.loadLocalExtensionsSpecifications()
@@ -154,6 +167,7 @@ beforeEach(async () => {
   vi.mocked(fetchOrgFromId).mockResolvedValue(ORG1)
   vi.mocked(getPackageManager).mockResolvedValue('npm')
   vi.mocked(isWebType).mockReturnValue(true)
+  vi.mocked(renderConfirmationPrompt).mockResolvedValue(false)
   vi.mocked(link).mockResolvedValue({
     configuration: testAppWithConfig({config: {path: 'shopify.app.toml', client_id: APP2.apiKey}}).configuration,
     remoteApp: APP2,
@@ -176,111 +190,7 @@ afterEach(() => {
 })
 
 describe('ensureDeployContext', () => {
-  test('prompts the user to include the configuration and persist the flag if the flag is not present', async () => {
-    // Given
-    const app = testAppWithConfig({config: {client_id: APP2.apiKey}})
-    const identifiers = {
-      app: APP2.apiKey,
-      extensions: {},
-      extensionIds: {},
-      extensionsNonUuidManaged: {},
-    }
-    vi.mocked(getAppIdentifiers).mockReturnValue({app: undefined})
-    vi.mocked(ensureDeploymentIdsPresence).mockResolvedValue(identifiers)
-    vi.mocked(renderConfirmationPrompt).mockResolvedValue(true)
-    vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
-
-    const patchAppConfigurationFileSpy = vi
-      .spyOn(patchAppConfigurationFile, 'patchAppConfigurationFile')
-      .mockResolvedValue()
-    const metadataSpyOn = vi.spyOn(metadata, 'addPublicMetadata').mockImplementation(async () => {})
-
-    // When
-    await ensureDeployContext(deployOptions(app))
-
-    // Then
-    expect(metadataSpyOn).toHaveBeenNthCalledWith(1, expect.any(Function))
-    expect(metadataSpyOn.mock.calls[0]![0]()).toEqual({cmd_deploy_confirm_include_config_used: true})
-
-    expect(renderConfirmationPrompt).toHaveBeenCalled()
-    expect(patchAppConfigurationFileSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: app.configuration.path,
-        patch: {
-          build: {include_config_on_deploy: true},
-        },
-        schema: expect.any(Object),
-      }),
-    )
-    expect(renderInfo).toHaveBeenCalledWith({
-      body: [
-        {
-          list: {
-            items: ['Org:             org1', 'App:             app2'],
-          },
-        },
-        '\n',
-        'You can pass ',
-        {
-          command: '--reset',
-        },
-        ' to your command to reset your app configuration.',
-      ],
-      headline: 'Using shopify.app.toml for default values:',
-    })
-    patchAppConfigurationFileSpy.mockRestore()
-  })
-
-  test('prompts the user to include the configuration and set it to false when not confirmed if the flag is not present', async () => {
-    // Given
-    const app = testAppWithConfig({config: {client_id: APP2.apiKey}})
-    const identifiers = {
-      app: APP2.apiKey,
-      extensions: {},
-      extensionIds: {},
-      extensionsNonUuidManaged: {},
-    }
-    vi.mocked(ensureDeploymentIdsPresence).mockResolvedValue(identifiers)
-    vi.mocked(renderConfirmationPrompt).mockResolvedValue(false)
-    vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
-    const patchAppConfigurationFileSpy = vi
-      .spyOn(patchAppConfigurationFile, 'patchAppConfigurationFile')
-      .mockResolvedValue()
-
-    // When
-    await ensureDeployContext(deployOptions(app))
-
-    // Then
-    expect(renderConfirmationPrompt).toHaveBeenCalled()
-    expect(patchAppConfigurationFileSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: app.configuration.path,
-        patch: {
-          build: {include_config_on_deploy: false},
-        },
-        schema: expect.any(Object),
-      }),
-    )
-    expect(renderInfo).toHaveBeenCalledWith({
-      body: [
-        {
-          list: {
-            items: ['Org:             org1', 'App:             app2'],
-          },
-        },
-        '\n',
-        'You can pass ',
-        {
-          command: '--reset',
-        },
-        ' to your command to reset your app configuration.',
-      ],
-      headline: 'Using shopify.app.toml for default values:',
-    })
-    patchAppConfigurationFileSpy.mockRestore()
-  })
-
-  test('prompts the user to include the configuration if the flag is false', async () => {
+  test('prompts the user to include the configuration if the flag is false and current config is false', async () => {
     // Given
     const app = testAppWithConfig({config: {client_id: APP2.apiKey, build: {include_config_on_deploy: false}}})
     const identifiers = {
@@ -293,11 +203,8 @@ describe('ensureDeployContext', () => {
     vi.mocked(ensureDeploymentIdsPresence).mockResolvedValue(identifiers)
     vi.mocked(loadApp).mockResolvedValue(app)
     vi.mocked(link).mockResolvedValue((app as any).configuration)
-    // vi.mocked(selectDeveloperPlatformClient).mockReturnValue(testDeveloperPlatformClient)
     vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
-    const patchAppConfigurationFileSpy = vi
-      .spyOn(patchAppConfigurationFile, 'patchAppConfigurationFile')
-      .mockResolvedValue()
+    const setAppConfigValueSpy = vi.spyOn(patchAppConfigurationFileModule, 'setAppConfigValue').mockResolvedValue()
     const metadataSpyOn = vi.spyOn(metadata, 'addPublicMetadata').mockImplementation(async () => {})
 
     const options = deployOptions(app)
@@ -310,7 +217,7 @@ describe('ensureDeployContext', () => {
     expect(metadataSpyOn).toHaveBeenCalled()
 
     expect(renderConfirmationPrompt).toHaveBeenCalled()
-    expect(patchAppConfigurationFileSpy).toHaveBeenCalled()
+    expect(setAppConfigValueSpy).toHaveBeenCalled()
     expect(renderInfo).toHaveBeenCalledWith({
       body: [
         {
@@ -319,18 +226,18 @@ describe('ensureDeployContext', () => {
           },
         },
         '\n',
-        'You can pass ',
+        'You can pass',
         {
           command: '--reset',
         },
-        ' to your command to reset your app configuration.',
+        'to your command to reset your app configuration.',
       ],
       headline: 'Using shopify.app.toml for default values:',
     })
-    patchAppConfigurationFileSpy.mockRestore()
+    setAppConfigValueSpy.mockRestore()
   })
 
-  test('doesnt prompt the user to include the configuration and display the current value if the flag is true', async () => {
+  test('doesnt prompt the user to include the configuration and display the current value if the config is true', async () => {
     // Given
     const app = testAppWithConfig({config: {client_id: APP2.apiKey, build: {include_config_on_deploy: true}}})
     const identifiers = {
@@ -345,9 +252,7 @@ describe('ensureDeployContext', () => {
     vi.mocked(link).mockResolvedValue((app as any).configuration)
     // vi.mocked(selectDeveloperPlatformClient).mockReturnValue(testDeveloperPlatformClient)
     vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
-    const patchAppConfigurationFileSpy = vi
-      .spyOn(patchAppConfigurationFile, 'patchAppConfigurationFile')
-      .mockResolvedValue()
+    const setAppConfigValueSpy = vi.spyOn(patchAppConfigurationFileModule, 'setAppConfigValue').mockResolvedValue()
     const metadataSpyOn = vi.spyOn(metadata, 'addPublicMetadata').mockImplementation(async () => {})
 
     const options = deployOptions(app)
@@ -360,7 +265,7 @@ describe('ensureDeployContext', () => {
     expect(metadataSpyOn).not.toHaveBeenCalled()
 
     expect(renderConfirmationPrompt).not.toHaveBeenCalled()
-    expect(patchAppConfigurationFileSpy).not.toHaveBeenCalled()
+    expect(setAppConfigValueSpy).not.toHaveBeenCalled()
     expect(renderInfo).toHaveBeenCalledWith({
       body: [
         {
@@ -369,15 +274,15 @@ describe('ensureDeployContext', () => {
           },
         },
         '\n',
-        'You can pass ',
+        'You can pass',
         {
           command: '--reset',
         },
-        ' to your command to reset your app configuration.',
+        'to your command to reset your app configuration.',
       ],
       headline: 'Using shopify.app.toml for default values:',
     })
-    patchAppConfigurationFileSpy.mockRestore()
+    setAppConfigValueSpy.mockRestore()
   })
 
   test('prompts the user to include the configuration when reset is used and the flag is present', async () => {
@@ -392,9 +297,7 @@ describe('ensureDeployContext', () => {
     vi.mocked(ensureDeploymentIdsPresence).mockResolvedValue(identifiers)
     vi.mocked(renderConfirmationPrompt).mockResolvedValue(false)
     vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
-    const patchAppConfigurationFileSpy = vi
-      .spyOn(patchAppConfigurationFile, 'patchAppConfigurationFile')
-      .mockResolvedValue()
+    const setAppConfigValueSpy = vi.spyOn(patchAppConfigurationFileModule, 'setAppConfigValue').mockResolvedValue()
     const metadataSpyOn = vi.spyOn(metadata, 'addPublicMetadata').mockImplementation(async () => {})
 
     const options = deployOptions(app, true)
@@ -407,36 +310,28 @@ describe('ensureDeployContext', () => {
     expect(metadataSpyOn.mock.calls[0]![0]()).toEqual({cmd_deploy_confirm_include_config_used: false})
 
     expect(renderConfirmationPrompt).toHaveBeenCalled()
-    expect(patchAppConfigurationFileSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: app.configuration.path,
-        patch: {
-          build: {include_config_on_deploy: false},
-        },
-        schema: expect.any(Object),
-      }),
-    )
+    expect(setAppConfigValueSpy).toHaveBeenCalledWith(app.configuration.path, 'build.include_config_on_deploy', false)
 
     expect(renderInfo).toHaveBeenCalledWith({
       body: [
         {
           list: {
-            items: ['Org:             org1', 'App:             app2'],
+            items: ['Org:             org1', 'App:             app2', 'Include config:  No'],
           },
         },
         '\n',
-        'You can pass ',
+        'You can pass',
         {
           command: '--reset',
         },
-        ' to your command to reset your app configuration.',
+        'to your command to reset your app configuration.',
       ],
       headline: 'Using shopify.app.toml for default values:',
     })
-    patchAppConfigurationFileSpy.mockRestore()
+    setAppConfigValueSpy.mockRestore()
   })
 
-  test('doesnt prompt the user to include the configuration when force is used if the flag is not present', async () => {
+  test('aborts when force is true and include_config_on_deploy is not set on Partners', async () => {
     // Given
     const app = testAppWithConfig({config: {client_id: APP2.apiKey}})
     const identifiers = {
@@ -446,38 +341,36 @@ describe('ensureDeployContext', () => {
       extensionsNonUuidManaged: {},
     }
     vi.mocked(ensureDeploymentIdsPresence).mockResolvedValue(identifiers)
-    vi.mocked(renderConfirmationPrompt).mockResolvedValue(false)
     vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
-    const patchAppConfigurationFileSpy = vi
-      .spyOn(patchAppConfigurationFile, 'patchAppConfigurationFile')
-      .mockResolvedValue()
 
     const options = deployOptions(app, false, true)
     vi.mocked(selectDeveloperPlatformClient).mockReturnValue(options.developerPlatformClient)
 
-    // When
-    await ensureDeployContext(options)
+    // When/Then
+    await expect(ensureDeployContext(options)).rejects.toThrowError(AbortError)
+    await expect(ensureDeployContext(options)).rejects.toThrow('You must specify a value for')
+  })
 
-    // Then
-    expect(renderConfirmationPrompt).not.toHaveBeenCalled()
-    expect(patchAppConfigurationFileSpy).not.toHaveBeenCalled()
-    expect(renderInfo).toHaveBeenCalledWith({
-      body: [
-        {
-          list: {
-            items: ['Org:             org1', 'App:             app2', 'Include config:  No'],
-          },
-        },
-        '\n',
-        'You can pass ',
-        {
-          command: '--reset',
-        },
-        ' to your command to reset your app configuration.',
-      ],
-      headline: 'Using shopify.app.toml for default values:',
-    })
-    patchAppConfigurationFileSpy.mockRestore()
+  test('does not abort when force is true and include_config_on_deploy is not set for App Management', async () => {
+    // Given
+    const app = testAppWithConfig({config: {client_id: APP2.apiKey}})
+    const identifiers = {
+      app: APP2.apiKey,
+      extensions: {},
+      extensionIds: {},
+      extensionsNonUuidManaged: {},
+    }
+    vi.mocked(ensureDeploymentIdsPresence).mockResolvedValue(identifiers)
+    vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
+
+    const options = {
+      ...deployOptions(app, false, true),
+      developerPlatformClient: buildDeveloperPlatformClient({supportsAtomicDeployments: true}),
+    }
+    vi.mocked(selectDeveloperPlatformClient).mockReturnValue(options.developerPlatformClient)
+
+    // When/Then
+    await expect(ensureDeployContext(options)).resolves.toBeDefined()
   })
 
   test('prompts the user to include the configuration when force is used and the flag is present', async () => {
@@ -492,16 +385,14 @@ describe('ensureDeployContext', () => {
     vi.mocked(ensureDeploymentIdsPresence).mockResolvedValue(identifiers)
     vi.mocked(renderConfirmationPrompt).mockResolvedValue(false)
     vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
-    const patchAppConfigurationFileSpy = vi
-      .spyOn(patchAppConfigurationFile, 'patchAppConfigurationFile')
-      .mockResolvedValue()
+    const setAppConfigValueSpy = vi.spyOn(patchAppConfigurationFileModule, 'setAppConfigValue').mockResolvedValue()
 
     // When
     await ensureDeployContext(deployOptions(app, false, true))
 
     // Then
     expect(renderConfirmationPrompt).not.toHaveBeenCalled()
-    expect(patchAppConfigurationFileSpy).not.toHaveBeenCalled()
+    expect(setAppConfigValueSpy).not.toHaveBeenCalled()
     expect(renderInfo).toHaveBeenCalledWith({
       body: [
         {
@@ -510,15 +401,15 @@ describe('ensureDeployContext', () => {
           },
         },
         '\n',
-        'You can pass ',
+        'You can pass',
         {
           command: '--reset',
         },
-        ' to your command to reset your app configuration.',
+        'to your command to reset your app configuration.',
       ],
       headline: 'Using shopify.app.toml for default values:',
     })
-    patchAppConfigurationFileSpy.mockRestore()
+    setAppConfigValueSpy.mockRestore()
   })
 
   test('removes the include_config_on_deploy field when using app management API and the value is true', async () => {
@@ -532,9 +423,7 @@ describe('ensureDeployContext', () => {
     }
     vi.mocked(ensureDeploymentIdsPresence).mockResolvedValue(identifiers)
     vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
-    const patchAppConfigurationFileSpy = vi
-      .spyOn(patchAppConfigurationFile, 'patchAppConfigurationFile')
-      .mockResolvedValue()
+    const unsetAppConfigValueSpy = vi.spyOn(patchAppConfigurationFileModule, 'unsetAppConfigValue').mockResolvedValue()
 
     // When
     const options = {
@@ -545,20 +434,13 @@ describe('ensureDeployContext', () => {
       force: false,
       noRelease: false,
       developerPlatformClient: buildDeveloperPlatformClient({supportsAtomicDeployments: true}),
+      skipBuild: false,
     }
     await ensureDeployContext(options)
 
     // Then
     expect(renderConfirmationPrompt).not.toHaveBeenCalled()
-    expect(patchAppConfigurationFileSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: app.configuration.path,
-        patch: {
-          build: {include_config_on_deploy: undefined},
-        },
-        schema: expect.any(Object),
-      }),
-    )
+    expect(unsetAppConfigValueSpy).toHaveBeenCalledWith(app.configuration.path, 'build.include_config_on_deploy')
     expect(renderInfo).toHaveBeenCalledWith({
       body: [
         'The `include_config_on_deploy` field is no longer supported, since all apps must now include configuration on deploy. It has been removed from your configuration file.',
@@ -569,7 +451,7 @@ describe('ensureDeployContext', () => {
         url: 'https://shopify.dev/docs/apps/build/cli-for-apps/app-configuration#build',
       },
     })
-    patchAppConfigurationFileSpy.mockRestore()
+    unsetAppConfigValueSpy.mockRestore()
   })
 
   test('removes the include_config_on_deploy field when using app management API and the value is false', async () => {
@@ -583,9 +465,7 @@ describe('ensureDeployContext', () => {
     }
     vi.mocked(ensureDeploymentIdsPresence).mockResolvedValue(identifiers)
     vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
-    const patchAppConfigurationFileSpy = vi
-      .spyOn(patchAppConfigurationFile, 'patchAppConfigurationFile')
-      .mockResolvedValue()
+    const unsetAppConfigValueSpy = vi.spyOn(patchAppConfigurationFileModule, 'unsetAppConfigValue').mockResolvedValue()
 
     // When
     const options = {
@@ -596,20 +476,13 @@ describe('ensureDeployContext', () => {
       force: false,
       noRelease: false,
       developerPlatformClient: buildDeveloperPlatformClient({supportsAtomicDeployments: true}),
+      skipBuild: false,
     }
     await ensureDeployContext(options)
 
     // Then
     expect(renderConfirmationPrompt).not.toHaveBeenCalled()
-    expect(patchAppConfigurationFileSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: app.configuration.path,
-        patch: {
-          build: {include_config_on_deploy: undefined},
-        },
-        schema: expect.any(Object),
-      }),
-    )
+    expect(unsetAppConfigValueSpy).toHaveBeenCalledWith(app.configuration.path, 'build.include_config_on_deploy')
     expect(renderWarning).toHaveBeenCalledWith({
       body: [
         "The `include_config_on_deploy` field is no longer supported and has been removed from your configuration file. Review this file to ensure it's up to date with the correct configuration.",
@@ -620,7 +493,99 @@ describe('ensureDeployContext', () => {
         url: 'https://shopify.dev/docs/apps/build/cli-for-apps/app-configuration#build',
       },
     })
-    patchAppConfigurationFileSpy.mockRestore()
+    unsetAppConfigValueSpy.mockRestore()
+  })
+
+  test('sets didMigrateExtensionsToDevDash to true when app modules are missing registration IDs', async () => {
+    // Given
+    const app = testAppWithConfig({config: {client_id: APP2.apiKey}})
+    const identifiers = {
+      app: APP2.apiKey,
+      extensions: {},
+      extensionIds: {},
+      extensionsNonUuidManaged: {},
+    }
+    vi.mocked(ensureDeploymentIdsPresence).mockResolvedValue(identifiers)
+    vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
+
+    const activeAppVersion = {
+      appModuleVersions: [
+        {registrationId: 'id-1', registrationUuid: 'uuid-1', type: 'app_access', registrationTitle: 'module-1'},
+        {registrationId: '', registrationUuid: 'uuid-2', type: 'pos_ui_extension', registrationTitle: 'module-2'},
+        {
+          registrationId: 'id-3',
+          registrationUuid: 'uuid-3',
+          type: 'checkout_ui_extension',
+          registrationTitle: 'module-3',
+        },
+      ],
+    }
+
+    const developerPlatformClient = buildDeveloperPlatformClient({
+      supportsAtomicDeployments: true,
+      activeAppVersion: () => Promise.resolve(activeAppVersion),
+    })
+
+    // When
+    const result = await ensureDeployContext({
+      app,
+      remoteApp: APP2,
+      organization: ORG1,
+      reset: false,
+      force: false,
+      noRelease: false,
+      developerPlatformClient,
+      skipBuild: false,
+    })
+
+    // Then
+    expect(result.didMigrateExtensionsToDevDash).toBe(true)
+  })
+
+  test('sets didMigrateExtensionsToDevDash to false when all app modules have registration IDs', async () => {
+    // Given
+    const app = testAppWithConfig({config: {client_id: APP2.apiKey}})
+    const identifiers = {
+      app: APP2.apiKey,
+      extensions: {},
+      extensionIds: {},
+      extensionsNonUuidManaged: {},
+    }
+    vi.mocked(ensureDeploymentIdsPresence).mockResolvedValue(identifiers)
+    vi.mocked(getAppConfigurationFileName).mockReturnValue('shopify.app.toml')
+
+    const activeAppVersion = {
+      appModuleVersions: [
+        {registrationId: 'id-1', registrationUuid: 'uuid-1', type: 'app_access', registrationTitle: 'module-1'},
+        {registrationId: 'id-2', registrationUuid: 'uuid-2', type: 'pos_ui_extension', registrationTitle: 'module-2'},
+        {
+          registrationId: 'id-3',
+          registrationUuid: 'uuid-3',
+          type: 'checkout_ui_extension',
+          registrationTitle: 'module-3',
+        },
+      ],
+    }
+
+    const developerPlatformClient = buildDeveloperPlatformClient({
+      supportsAtomicDeployments: true,
+      activeAppVersion: () => Promise.resolve(activeAppVersion),
+    })
+
+    // When
+    const result = await ensureDeployContext({
+      app,
+      remoteApp: APP2,
+      organization: ORG1,
+      reset: false,
+      force: false,
+      noRelease: false,
+      developerPlatformClient,
+      skipBuild: false,
+    })
+
+    // Then
+    expect(result.didMigrateExtensionsToDevDash).toBe(false)
   })
 })
 
@@ -688,11 +653,76 @@ describe('ensureThemeExtensionDevContext', () => {
   })
 })
 
-async function mockApp(directory: string, app?: Partial<AppInterface>) {
-  const versionSchema = await buildVersionedAppSchema()
-  const localApp = testApp(app)
-  localApp.configSchema = versionSchema.schema
-  localApp.specifications = versionSchema.configSpecifications
-  localApp.directory = directory
-  return localApp
-}
+describe('appFromIdentifiers', () => {
+  test('renders the org name when an app cannot be found and the account is a service account ', async () => {
+    vi.mocked(isServiceAccount).mockReturnValue(true)
+
+    const developerPlatformClient = testDeveloperPlatformClient({
+      appFromIdentifiers: () => Promise.resolve(undefined),
+      accountInfo: () =>
+        Promise.resolve({
+          type: 'ServiceAccount',
+          orgName: 'My Test Org',
+        }),
+    })
+
+    vi.mocked(allDeveloperPlatformClients).mockReturnValue([developerPlatformClient])
+
+    await expect(
+      appFromIdentifiers({
+        apiKey: 'apiKey-12345',
+      }),
+    ).rejects.toThrowError(
+      expect.objectContaining({
+        message: 'No app with client ID apiKey-12345 found',
+        tryMessage: renderTryMessage(true, 'My Test Org'),
+      }),
+    )
+  })
+
+  test('renders the user email when an app cannot be found and the account is a user account ', async () => {
+    vi.mocked(isUserAccount).mockReturnValue(true)
+
+    const developerPlatformClient = testDeveloperPlatformClient({
+      appFromIdentifiers: () => Promise.resolve(undefined),
+      accountInfo: () =>
+        Promise.resolve({
+          type: 'UserAccount',
+          email: 'user@example.com',
+        }),
+    })
+
+    vi.mocked(allDeveloperPlatformClients).mockReturnValue([developerPlatformClient])
+
+    await expect(
+      appFromIdentifiers({
+        apiKey: 'apiKey-12345',
+      }),
+    ).rejects.toThrowError(
+      expect.objectContaining({
+        message: 'No app with client ID apiKey-12345 found',
+        tryMessage: renderTryMessage(false, 'user@example.com'),
+      }),
+    )
+  })
+})
+
+const renderTryMessage = (isOrg: boolean, identifier: string) => [
+  {
+    list: {
+      title: 'Next steps:',
+      items: [
+        'Check that your account has permission to develop apps for this organization or contact the owner of the organization to grant you permission',
+        [
+          'Run',
+          {command: 'shopify auth logout'},
+          'to log into a different',
+          isOrg ? 'organization' : 'account',
+          'than',
+          {bold: identifier},
+        ],
+        ['Pass', {command: '--reset'}, 'to your command to create a new app'],
+      ],
+    },
+  },
+]

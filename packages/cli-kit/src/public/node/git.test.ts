@@ -1,5 +1,5 @@
 import * as git from './git.js'
-import {appendFileSync} from './fs.js'
+import {appendFileSync, fileExistsSync, inTemporaryDirectory, readFileSync, writeFileSync} from './fs.js'
 import {hasGit} from './context/local.js'
 import {beforeEach, describe, expect, test, vi} from 'vitest'
 import simpleGit from 'simple-git'
@@ -13,6 +13,9 @@ const mockedCommit = vi.fn(async () => ({}))
 const mockedRaw = vi.fn(async () => '')
 const mockedCheckout = vi.fn(async () => ({}))
 const mockedGitStatus = vi.fn(async (): Promise<{isClean: () => boolean}> => ({isClean: () => false}))
+const mockedRemoveRemote = vi.fn(async () => {})
+const mockedGetRemotes = vi.fn(async () => [] as {name: string; refs: any}[])
+const mockedTags = vi.fn(async () => ({}))
 const simpleGitProperties = {
   clone: mockedClone,
   init: mockedInit,
@@ -23,11 +26,20 @@ const simpleGitProperties = {
   raw: mockedRaw,
   checkoutLocalBranch: mockedCheckout,
   status: mockedGitStatus,
+  tags: mockedTags,
+  removeRemote: mockedRemoveRemote,
+  getRemotes: mockedGetRemotes,
 }
 
-vi.mock('./context/local.js')
-vi.mock('./fs.js')
 vi.mock('simple-git')
+vi.mock('./context/local.js')
+vi.mock('./fs.js', async () => {
+  const fs = await vi.importActual('./fs.js')
+  return {
+    ...fs,
+    appendFileSync: vi.fn(),
+  }
+})
 
 beforeEach(() => {
   vi.mocked(hasGit).mockResolvedValue(true)
@@ -296,6 +308,24 @@ describe('ensureInsideGitDirectory()', () => {
     // Then
     await expect(git.ensureInsideGitDirectory()).resolves.toBeUndefined()
   })
+})
+
+describe('insideGitDirectory()', () => {
+  test('returns true if inside a git directory', async () => {
+    // Given
+    mockedCheckIsRepo.mockResolvedValue(true)
+
+    // Then
+    await expect(git.insideGitDirectory()).resolves.toBe(true)
+  })
+
+  test('returns false if not inside a git directory', async () => {
+    // Given
+    mockedCheckIsRepo.mockResolvedValue(false)
+
+    // Then
+    await expect(git.insideGitDirectory()).resolves.toBe(false)
+  })
 
   test('passes the directory option to simple git', async () => {
     // Given
@@ -303,7 +333,7 @@ describe('ensureInsideGitDirectory()', () => {
     mockedCheckIsRepo.mockResolvedValue(true)
 
     // When
-    await git.ensureInsideGitDirectory(directory)
+    await git.insideGitDirectory(directory)
 
     // Then
     expect(simpleGit).toHaveBeenCalledWith({baseDir: directory})
@@ -325,6 +355,31 @@ describe('ensureIsClean()', () => {
 
     // Then
     await expect(git.ensureIsClean()).resolves.toBeUndefined()
+  })
+})
+
+describe('getLatestTag()', () => {
+  test('returns the latest tag from git', async () => {
+    // Given
+    const expectedTag = 'v1.0.0'
+    mockedTags.mockResolvedValue({latest: expectedTag})
+
+    // When
+    const tag = await git.getLatestTag()
+
+    // Then
+    await expect(git.getLatestTag()).resolves.toBe(expectedTag)
+  })
+
+  test('return undefined when no tags exist', async () => {
+    // Given
+    mockedTags.mockResolvedValue({})
+
+    // When
+    const tag = await git.getLatestTag()
+
+    // Then
+    await expect(git.getLatestTag()).resolves.toBeUndefined()
   })
 })
 
@@ -355,5 +410,144 @@ describe('isGitClean()', () => {
 
     // Then
     expect(simpleGit).toHaveBeenCalledWith({baseDir: directory})
+  })
+})
+
+describe('addToGitIgnore()', () => {
+  test('does nothing when .gitignore does not exist', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const gitIgnorePath = `${tmpDir}/.gitignore`
+
+      // When
+      git.addToGitIgnore(tmpDir, '.shopify')
+
+      // Then
+      expect(fileExistsSync(gitIgnorePath)).toBe(false)
+    })
+  })
+
+  test('does nothing when pattern already exists in .gitignore', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const gitIgnorePath = `${tmpDir}/.gitignore`
+      const gitIgnoreContent = ' .shopify \nnode_modules\n'
+
+      writeFileSync(gitIgnorePath, gitIgnoreContent)
+
+      // When
+      git.addToGitIgnore(tmpDir, '.shopify')
+
+      // Then
+      const actualContent = readFileSync(gitIgnorePath).toString()
+      expect(actualContent).toBe(gitIgnoreContent)
+    })
+  })
+
+  test('appends pattern to .gitignore when file exists and pattern not present', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const gitIgnorePath = `${tmpDir}/.gitignore`
+
+      writeFileSync(gitIgnorePath, 'node_modules\ndist')
+
+      // When
+      git.addToGitIgnore(tmpDir, '.shopify')
+
+      // Then
+      const gitIgnoreContent = readFileSync(gitIgnorePath).toString()
+      expect(gitIgnoreContent).toBe('node_modules\ndist\n.shopify\n')
+    })
+  })
+
+  test('appends pattern to .gitignore when file exists and pattern not present without duplicating the last empty line', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const gitIgnorePath = `${tmpDir}/.gitignore`
+
+      writeFileSync(gitIgnorePath, 'node_modules\ndist\n')
+
+      // When
+      git.addToGitIgnore(tmpDir, '.shopify')
+
+      // Then
+      const gitIgnoreContent = readFileSync(gitIgnorePath).toString()
+      expect(gitIgnoreContent).toBe('node_modules\ndist\n.shopify\n')
+    })
+  })
+
+  test('does nothing when .shopify/* pattern exists in .gitignore', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const gitIgnorePath = `${tmpDir}/.gitignore`
+      const gitIgnoreContent = '.shopify/*\nnode_modules\n'
+
+      writeFileSync(gitIgnorePath, gitIgnoreContent)
+
+      // When
+      git.addToGitIgnore(tmpDir, '.shopify')
+
+      // Then
+      const actualContent = readFileSync(gitIgnorePath).toString()
+      expect(actualContent).toBe(gitIgnoreContent)
+    })
+  })
+
+  test('does nothing when .shopify/** pattern exists in .gitignore', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const gitIgnorePath = `${tmpDir}/.gitignore`
+      const gitIgnoreContent = '.shopify/**\nnode_modules\n'
+
+      writeFileSync(gitIgnorePath, gitIgnoreContent)
+
+      // When
+      git.addToGitIgnore(tmpDir, '.shopify')
+
+      // Then
+      const actualContent = readFileSync(gitIgnorePath).toString()
+      expect(actualContent).toBe(gitIgnoreContent)
+    })
+  })
+})
+
+describe('removeGitRemote()', () => {
+  beforeEach(() => {
+    mockedGetRemotes.mockReset()
+    mockedRemoveRemote.mockReset()
+  })
+
+  test('calls simple-git to remove a remote successfully', async () => {
+    // Given
+    const directory = '/test/directory'
+    const remoteName = 'origin'
+    mockedGetRemotes.mockResolvedValue([{name: 'origin', refs: {}}])
+    mockedRemoveRemote.mockResolvedValue(undefined)
+
+    // When
+    await git.removeGitRemote(directory, remoteName)
+
+    // Then
+    expect(simpleGit).toHaveBeenCalledWith(directory)
+    expect(mockedGetRemotes).toHaveBeenCalled()
+    expect(mockedRemoveRemote).toHaveBeenCalledWith(remoteName)
+  })
+
+  test('does nothing when remote does not exist', async () => {
+    // Given
+    const directory = '/test/directory'
+    const remoteName = 'nonexistent'
+    mockedGetRemotes.mockResolvedValue([
+      {name: 'origin', refs: {}},
+      {name: 'upstream', refs: {}},
+    ])
+
+    // When
+    await git.removeGitRemote(directory, remoteName)
+
+    // Then
+    expect(simpleGit).toHaveBeenCalledWith(directory)
+    expect(mockedGetRemotes).toHaveBeenCalled()
+    expect(mockedRemoveRemote).not.toHaveBeenCalled()
   })
 })

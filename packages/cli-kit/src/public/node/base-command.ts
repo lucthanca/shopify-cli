@@ -1,10 +1,10 @@
 import {errorHandler, registerCleanBugsnagErrorsFromWithinPlugins} from './error-handler.js'
-import {loadEnvironment} from './environments.js'
+import {loadEnvironment, environmentFilePath} from './environments.js'
 import {isDevelopment} from './context/local.js'
 import {addPublicMetadata} from './metadata.js'
 import {AbortError} from './error.js'
 import {renderInfo, renderWarning} from './ui.js'
-import {outputContent, outputInfo, outputToken} from './output.js'
+import {outputContent, outputResult, outputToken} from './output.js'
 import {terminalSupportsPrompting} from './system.js'
 import {hashString} from './crypto.js'
 import {isTruthy} from './context/utilities.js'
@@ -13,10 +13,15 @@ import {setCurrentCommandId} from './global-context.js'
 import {JsonMap} from '../../private/common/json.js'
 import {underscore} from '../common/string.js'
 import {Command, Errors} from '@oclif/core'
-import {FlagOutput, Input, ParserOutput, FlagInput, ArgOutput} from '@oclif/core/lib/interfaces/parser.js'
+import {OutputFlags, Input, ParserOutput, FlagInput, OutputArgs} from '@oclif/core/parser'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ArgOutput = OutputArgs<any>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type FlagOutput = OutputFlags<any>
 
 interface EnvironmentFlags {
-  environment?: string
+  environment?: string[]
   path?: string
 }
 
@@ -44,10 +49,9 @@ abstract class BaseCommand extends Command {
     return Errors.handle(error)
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  protected async init(): Promise<any> {
+  protected async init(): Promise<unknown> {
     this.exitWithTimestampWhenEnvVariablePresent()
-    setCurrentCommandId(this.id || '')
+    setCurrentCommandId(this.id ?? '')
     if (!isDevelopment()) {
       // This function runs just prior to `run`
       await registerCleanBugsnagErrorsFromWithinPlugins(this.config)
@@ -80,7 +84,7 @@ abstract class BaseCommand extends Command {
   // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
   protected exitWithTimestampWhenEnvVariablePresent() {
     if (isTruthy(process.env.SHOPIFY_CLI_ENV_STARTUP_PERFORMANCE_RUN)) {
-      outputInfo(`
+      outputResult(`
       SHOPIFY_CLI_TIMESTAMP_START
       { "timestamp": ${Date.now()} }
       SHOPIFY_CLI_TIMESTAMP_END
@@ -134,14 +138,35 @@ This flag is required in non-interactive terminal environments, such as a CI env
     options?: Input<TFlags, TGlobalFlags, TArgs>,
     argv?: string[],
   ): Promise<ParserOutput<TFlags, TGlobalFlags, TArgs>> {
-    // If no environment is specified, don't modify the results
     const flags = originalResult.flags as EnvironmentFlags
     const environmentsFileName = this.environmentsFilename()
-    if (!flags.environment || !environmentsFileName) return originalResult
 
-    // If the specified environment isn't found, don't modify the results
-    const environment = await loadEnvironment(flags.environment, environmentsFileName, {from: flags.path})
+    if (!environmentsFileName) return originalResult
+
+    const environmentFileExists = await environmentFilePath(environmentsFileName, {from: flags.path})
+
+    // Handle both string and array cases for environment flag
+    let environments: string[] = []
+    if (flags.environment) {
+      environments = Array.isArray(flags.environment) ? flags.environment : [flags.environment]
+    }
+
+    const environmentSpecified = environments.length > 0
+
+    // Noop if no environment file exists and none was specified
+    if (!environmentFileExists && !environmentSpecified) return originalResult
+
+    // Noop if multiple environments were specified (let commands handle this)
+    if (environmentSpecified && environments.length > 1) return originalResult
+
+    const {environment, isDefaultEnvironment} = await this.loadEnvironmentForCommand(
+      flags.path,
+      environmentsFileName,
+      environments[0],
+    )
+
     if (!environment) return originalResult
+    if (isDefaultEnvironment && !commandSupportsFlag(options?.flags, 'environment')) return originalResult
 
     // Parse using noDefaultsOptions to derive a list of flags specified as
     // command-line arguments.
@@ -152,19 +177,38 @@ This flag is required in non-interactive terminal environments, such as a CI env
     // Replace the original result with this one.
     const result = await super.parse<TFlags, TGlobalFlags, TArgs>(options, [
       // Need to specify argv default because we're merging with argsFromEnvironment.
-      ...(argv || this.argv),
+      ...(argv ?? this.argv),
       ...argsFromEnvironment<TFlags, TGlobalFlags, TArgs>(environment, options, noDefaultsResult),
+      ...(isDefaultEnvironment ? ['--environment', 'default'] : []),
     ])
 
     // Report successful application of the environment.
     reportEnvironmentApplication<TFlags, TGlobalFlags, TArgs>(
       noDefaultsResult.flags,
       result.flags,
-      flags.environment,
+      isDefaultEnvironment ? 'default' : (environments[0] as string),
       environment,
     )
 
     return result
+  }
+
+  /**
+   * Tries to load an environment to forward to the command. If no environment
+   * is specified it will try to load a default environment.
+   */
+  private async loadEnvironmentForCommand(
+    path: string | undefined,
+    environmentsFileName: string,
+    specifiedEnvironment: string | undefined,
+  ): Promise<{environment: JsonMap | undefined; isDefaultEnvironment: boolean}> {
+    if (specifiedEnvironment) {
+      const environment = await loadEnvironment(specifiedEnvironment, environmentsFileName, {from: path})
+      return {environment, isDefaultEnvironment: false}
+    }
+
+    const environment = await loadEnvironment('default', environmentsFileName, {from: path, silent: true})
+    return {environment, isDefaultEnvironment: true}
   }
 }
 
@@ -264,7 +308,7 @@ function argsFromEnvironment<TFlags extends FlagOutput, TGlobalFlags extends Fla
 ): string[] {
   const args: string[] = []
   for (const [label, value] of Object.entries(environment)) {
-    const flagIsRelevantToCommand = options?.flags && Object.prototype.hasOwnProperty.call(options.flags, label)
+    const flagIsRelevantToCommand = commandSupportsFlag(options?.flags, label)
     const userSpecifiedThisFlag =
       noDefaultsResult.flags && Object.prototype.hasOwnProperty.call(noDefaultsResult.flags, label)
     if (flagIsRelevantToCommand && !userSpecifiedThisFlag) {
@@ -286,6 +330,10 @@ function argsFromEnvironment<TFlags extends FlagOutput, TGlobalFlags extends Fla
     }
   }
   return args
+}
+
+function commandSupportsFlag(flags: FlagInput | undefined, flagName: string): boolean {
+  return Boolean(flags) && Object.prototype.hasOwnProperty.call(flags, flagName)
 }
 
 export default BaseCommand

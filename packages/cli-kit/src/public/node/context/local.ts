@@ -1,7 +1,7 @@
 import {isSpin} from './spin.js'
 import {isTruthy} from './utilities.js'
 import {getCIMetadata, isSet, Metadata} from '../../../private/node/context/utilities.js'
-import {environmentVariables, pathConstants} from '../../../private/node/constants.js'
+import {defaultThemeKitAccessDomain, environmentVariables, pathConstants} from '../../../private/node/constants.js'
 import {fileExists} from '../fs.js'
 import {exec} from '../system.js'
 import isInteractive from 'is-interactive'
@@ -44,16 +44,6 @@ export function isDevelopment(env = process.env): boolean {
  */
 export function isVerbose(env = process.env): boolean {
   return isTruthy(env[environmentVariables.verbose]) || process.argv.includes('--verbose')
-}
-
-/**
- * It returns true if the App Management API is available.
- *
- * @param env - The environment variables from the environment of the current process.
- * @returns True if the App Management API is available.
- */
-export function isAppManagementEnabled(env = process.env): boolean {
-  return isTruthy(env[environmentVariables.useAppManagement])
 }
 
 /**
@@ -121,26 +111,6 @@ export function alwaysLogMetrics(env = process.env): boolean {
  */
 export function firstPartyDev(env = process.env): boolean {
   return isTruthy(env[environmentVariables.firstPartyDev])
-}
-
-/**
- * Returns true if the CLI should use theme bundling.
- *
- * @param env - The environment variables from the environment of the current process.
- * @returns False if SHOPIFY_CLI_NO_THEME_BUNDLING is truthy.
- */
-export function useThemebundling(env = process.env): boolean {
-  return !isTruthy(env[environmentVariables.noThemeBundling])
-}
-
-/**
- * Returns true if the embedded CLI will be used for theme commands.
- *
- * @param env - The environment variables from the environment of the current process.
- * @returns False if SHOPIFY_CLI_BUNDLED_THEME_CLI is truthy.
- */
-export function useEmbeddedThemeCLI(env = process.env): boolean {
-  return !isTruthy(env[environmentVariables.bundledThemeCLI])
 }
 
 /**
@@ -287,6 +257,22 @@ export function macAddress(): Promise<string> {
 }
 
 /**
+ * Get the domain for theme kit access.
+ *
+ * It can be overridden via the SHOPIFY_CLI_THEME_KIT_ACCESS_DOMAIN environment
+ * variable.
+ *
+ * @param env - The environment variables from the environment of the process.
+ *
+ * @returns The domain for theme kit access.
+ */
+export function getThemeKitAccessDomain(env = process.env): string {
+  const domain = env[environmentVariables.themeKitAccessDomain]
+
+  return isSet(domain) ? domain : defaultThemeKitAccessDomain
+}
+
+/**
  * Get the domain to send OTEL metrics to.
  *
  * It can be overridden via the SHOPIFY_CLI_OTEL_EXPORTER_OTLP_ENDPOINT environment variable.
@@ -294,11 +280,10 @@ export function macAddress(): Promise<string> {
  * @param env - The environment variables from the environment of the current process.
  * @returns The domain to send OTEL metrics to.
  */
-export function opentelemetryDomain(env = process.env): string | undefined {
-  if (isSet(env[environmentVariables.otelURL])) {
-    return env[environmentVariables.otelURL]
-  }
-  return 'https://otlp-http-production-cli.shopifysvc.com'
+export function opentelemetryDomain(env = process.env): string {
+  const domain = env[environmentVariables.otelURL]
+
+  return isSet(domain) ? domain : 'https://otlp-http-production-cli.shopifysvc.com'
 }
 
 export type CIMetadata = Metadata

@@ -1,8 +1,8 @@
 import {
+  ApplicationURLs,
   FrontendURLOptions,
-  PartnersURLs,
+  generateApplicationURLs,
   generateFrontendURL,
-  generatePartnersURLs,
   getURLs,
   shouldOrPromptUpdateURLs,
   startTunnelPlugin,
@@ -18,23 +18,27 @@ import {fetchAppPreviewMode} from './dev/fetch.js'
 import {installAppDependencies} from './dependencies.js'
 import {DevConfig, DevProcesses, setupDevProcesses} from './dev/processes/setup-dev-processes.js'
 import {frontAndBackendConfig} from './dev/processes/utils.js'
-import {outputUpdateURLsResult, renderDev} from './dev/ui.js'
+import {renderDev} from './dev/ui.js'
 import {DeveloperPreviewController} from './dev/ui/components/Dev.js'
 import {DevProcessFunction} from './dev/processes/types.js'
 import {getCachedAppInfo, setCachedAppInfo} from './local-storage.js'
 import {canEnablePreviewMode} from './extensions/common.js'
 import {fetchAppRemoteConfiguration} from './app/select-app.js'
-import {patchAppConfigurationFile} from './app/patch-app-configuration-file.js'
+import {setAppConfigValue} from './app/patch-app-configuration-file.js'
+import {DevSessionStatusManager} from './dev/processes/dev-session/dev-session-status-manager.js'
+import {TunnelMode} from './dev/tunnel-mode.js'
+import {PortDetail, renderPortWarnings} from './dev/port-warnings.js'
 import {DeveloperPlatformClient} from '../utilities/developer-platform-client.js'
 import {Web, isCurrentAppSchema, getAppScopesArray, AppLinkedInterface} from '../models/app/app.js'
 import {Organization, OrganizationApp, OrganizationStore} from '../models/organization.js'
 import {getAnalyticsTunnelType} from '../utilities/analytics.js'
-import {ports} from '../constants.js'
 import metadata from '../metadata.js'
 import {AppConfigurationUsedByCli} from '../models/extensions/specifications/types/app_config.js'
 import {RemoteAwareExtensionSpecification} from '../models/extensions/specification.js'
+import {ports} from '../constants.js'
+import {generateCertificate} from '../utilities/mkcert.js'
+import {throwUidMappingError} from '../prompts/uid-mapping-error.js'
 import {Config} from '@oclif/core'
-import {performActionWithRetryAfterRecovery} from '@shopify/cli-kit/common/retry'
 import {AbortController} from '@shopify/cli-kit/node/abort'
 import {checkPortAvailability, getAvailableTCPPort} from '@shopify/cli-kit/node/tcp'
 import {TunnelClient} from '@shopify/cli-kit/node/plugins/tunnel'
@@ -42,10 +46,9 @@ import {getBackendPort} from '@shopify/cli-kit/node/environment'
 import {basename} from '@shopify/cli-kit/node/path'
 import {renderWarning} from '@shopify/cli-kit/node/ui'
 import {reportAnalyticsEvent} from '@shopify/cli-kit/node/analytics'
-import {OutputProcess, formatPackageManagerCommand, outputDebug} from '@shopify/cli-kit/node/output'
+import {OutputProcess, formatPackageManagerCommand} from '@shopify/cli-kit/node/output'
 import {hashString} from '@shopify/cli-kit/node/crypto'
 import {AbortError} from '@shopify/cli-kit/node/error'
-import {ensureXpifyDev} from '@xpify/buildpack'
 
 export interface DevOptions {
   app: AppLinkedInterface
@@ -60,8 +63,7 @@ export interface DevOptions {
   skipDependenciesInstallation: boolean
   subscriptionProductUrl?: string
   checkoutCartUrl?: string
-  tunnelUrl?: string
-  noTunnel: boolean
+  tunnel: TunnelMode
   theme?: string
   themeExtensionPort?: number
   notify?: string
@@ -72,18 +74,19 @@ export interface DevOptions {
 export async function dev(commandOptions: DevOptions) {
   const config = await prepareForDev(commandOptions)
   await actionsBeforeSettingUpDevProcesses(config)
-  const {processes, graphiqlUrl, previewUrl} = await setupDevProcesses(config)
+  const {processes, graphiqlUrl, previewUrl, devSessionStatusManager} = await setupDevProcesses(config)
   await actionsBeforeLaunchingDevProcesses(config)
-  await launchDevProcesses({processes, previewUrl, graphiqlUrl, config})
+  await launchDevProcesses({processes, previewUrl, graphiqlUrl, config, devSessionStatusManager})
 }
 
 async function prepareForDev(commandOptions: DevOptions): Promise<DevConfig> {
-  const {app, remoteApp, developerPlatformClient, store, specifications} = commandOptions
+  const {app, remoteApp, developerPlatformClient, store, specifications, tunnel} = commandOptions
 
   // Be optimistic about tunnel creation and do it as early as possible
-  const tunnelPort = await getAvailableTCPPort()
   let tunnelClient: TunnelClient | undefined
-  if (!commandOptions.tunnelUrl && !commandOptions.noTunnel) {
+
+  if (tunnel.mode === 'auto') {
+    const tunnelPort = await getAvailableTCPPort()
     tunnelClient = await startTunnelPlugin(commandOptions.commandConfig, tunnelPort, 'cloudflare')
   }
 
@@ -101,47 +104,49 @@ async function prepareForDev(commandOptions: DevOptions): Promise<DevConfig> {
     selectedStore: store,
     cachedInfo: getCachedAppInfo(commandOptions.directory),
     organization: commandOptions.organization,
+    tunnelMode: tunnel.mode,
   })
 
-  // Update the dev_store_url in the app configuration if it doesn't match the store domain
-  if (app.configuration.build?.dev_store_url !== store.shopDomain) {
+  // If the dev_store_url is set in the app configuration, keep updating it.
+  // If not, `store-context.ts` will take care of caching it in the hidden config.
+  if (app.configuration.build?.dev_store_url) {
     app.configuration.build = {
       ...app.configuration.build,
       dev_store_url: store.shopDomain,
     }
-    const patch = {build: {dev_store_url: store.shopDomain}}
-    await patchAppConfigurationFile({path: app.configuration.path, patch, schema: app.configSchema})
+    await setAppConfigValue(app.configuration.path, 'build.dev_store_url', store.shopDomain)
   }
 
   if (!commandOptions.skipDependenciesInstallation && !app.usesWorkspaces) {
     await installAppDependencies(app)
   }
 
-  const graphiqlPort = commandOptions.graphiqlPort || (await getAvailableTCPPort(ports.graphiql))
-  const {graphiqlKey} = commandOptions
+  const graphiqlPort = commandOptions.graphiqlPort ?? (await getAvailableTCPPort(ports.graphiql))
+  const portDetails: PortDetail[] = [
+    {
+      for: 'GraphiQL',
+      flagToRemedy: '--graphiql-port',
+      requested: commandOptions.graphiqlPort ?? ports.graphiql,
+      actual: graphiqlPort,
+    },
+  ]
 
-  if (graphiqlPort !== (commandOptions.graphiqlPort || ports.graphiql)) {
-    renderWarning({
-      headline: [
-        'A random port will be used for GraphiQL because',
-        {command: `${ports.graphiql}`},
-        'is not available.',
-      ],
-      body: [
-        'If you want to keep your session in GraphiQL, you can choose a different one by setting the',
-        {command: '--graphiql-port'},
-        'flag.',
-      ],
+  if (tunnel.mode === 'use-localhost') {
+    portDetails.push({
+      for: 'localhost',
+      flagToRemedy: '--localhost-port',
+      requested: tunnel.requestedPort,
+      actual: tunnel.actualPort,
     })
   }
 
+  renderPortWarnings(portDetails)
+
   const {webs, ...network} = await setupNetworkingOptions(
+    app.directory,
     app.webs,
     graphiqlPort,
-    {
-      noTunnel: commandOptions.noTunnel,
-      tunnelUrl: commandOptions.tunnelUrl,
-    },
+    tunnel,
     tunnelClient,
     remoteApp.configuration,
   )
@@ -151,7 +156,6 @@ async function prepareForDev(commandOptions: DevOptions): Promise<DevConfig> {
   const previousAppId = getCachedAppInfo(commandOptions.directory)?.previousAppId
   const apiKey = remoteApp.apiKey
 
-  await ensureXpifyDev({localApp: app, remoteApp})
   const partnerUrlsUpdated = await handleUpdatingOfPartnerUrls(
     webs,
     commandOptions.update,
@@ -174,12 +178,13 @@ async function prepareForDev(commandOptions: DevOptions): Promise<DevConfig> {
     network,
     partnerUrlsUpdated,
     graphiqlPort,
-    graphiqlKey,
+    graphiqlKey: commandOptions.graphiqlKey,
   }
 }
 
 async function actionsBeforeSettingUpDevProcesses(devConfig: DevConfig) {
   await warnIfScopesDifferBeforeDev(devConfig)
+  await blockIfMigrationIncomplete(devConfig)
 }
 
 /**
@@ -225,7 +230,7 @@ export async function warnIfScopesDifferBeforeDev({
           scopesMessage(getAppScopesArray(localApp.configuration)),
           '\n',
           'Scopes in Partner Dashboard:',
-          scopesMessage(remoteAccess?.scopes?.split(',') || []),
+          scopesMessage(remoteAccess?.scopes?.split(',') ?? []),
         ],
         nextSteps,
       })
@@ -233,8 +238,23 @@ export async function warnIfScopesDifferBeforeDev({
   }
 }
 
+export async function blockIfMigrationIncomplete(devConfig: DevConfig) {
+  const {developerPlatformClient, remoteApp} = devConfig
+  if (!developerPlatformClient.supportsDevSessions) return
+
+  const extensions = (await developerPlatformClient.appExtensionRegistrations(remoteApp)).app.extensionRegistrations
+  if (
+    !extensions
+      // Ignore webhook subscriptions because they do need UIDs but shouldn't block dev
+      .filter((extension) => extension.type.toLowerCase() !== 'webhook_subscription')
+      .every((extension) => extension.id)
+  ) {
+    throwUidMappingError()
+  }
+}
+
 async function actionsBeforeLaunchingDevProcesses(config: DevConfig) {
-  setPreviousAppId(config.commandOptions.directory, config.remoteApp.apiKey)
+  setCachedAppInfo({directory: config.commandOptions.directory, previousAppId: config.remoteApp.apiKey})
 
   await logMetadataForDev({
     devOptions: config.commandOptions,
@@ -251,7 +271,7 @@ async function handleUpdatingOfPartnerUrls(
   commandSpecifiedToUpdate: boolean,
   network: {
     proxyUrl: string
-    currentUrls: PartnersURLs
+    currentUrls: ApplicationURLs
   },
   localApp: AppLinkedInterface,
   cachedUpdateURLs: boolean | undefined,
@@ -263,10 +283,10 @@ async function handleUpdatingOfPartnerUrls(
   let shouldUpdateURLs = false
   if (frontendConfig ?? backendConfig) {
     if (commandSpecifiedToUpdate) {
-      const newURLs = generatePartnersURLs(
+      const newURLs = generateApplicationURLs(
         network.proxyUrl,
         webs.map(({configuration}) => configuration.auth_callback_path).find((path) => path),
-        isCurrentAppSchema(localApp.configuration) ? localApp.configuration.app_proxy : undefined,
+        localApp.configuration.app_proxy,
       )
       shouldUpdateURLs = await shouldOrPromptUpdateURLs({
         currentURLs: network.currentUrls,
@@ -275,20 +295,31 @@ async function handleUpdatingOfPartnerUrls(
         newApp: remoteApp.newApp,
         localApp,
         apiKey,
+        newURLs,
+        developerPlatformClient,
       })
-      // When running dev app urls are pushed directly to API Client config instead of creating a new app version
-      // so current app version and API Client config will have diferent url values.
-      if (shouldUpdateURLs) await updateURLs(newURLs, apiKey, developerPlatformClient, localApp)
-      await outputUpdateURLsResult(shouldUpdateURLs, newURLs, remoteApp, localApp)
+
+      if (shouldUpdateURLs) {
+        if (developerPlatformClient.supportsDevSessions) {
+          // For dev sessions, store the new URLs in the local app so that the manifest can be patched with them
+          // The local toml is not updated.
+          localApp.setDevApplicationURLs(newURLs)
+        } else {
+          // When running dev app urls are pushed directly to API Client config instead of creating a new app version
+          // so current app version and API Client config will have diferent url values.
+          await updateURLs(newURLs, apiKey, developerPlatformClient, localApp)
+        }
+      }
     }
   }
   return shouldUpdateURLs
 }
 
 async function setupNetworkingOptions(
+  appDirectory: string,
   webs: Web[],
   graphiqlPort: number,
-  frontEndOptions: Pick<FrontendURLOptions, 'noTunnel' | 'tunnelUrl'>,
+  tunnelOptions: TunnelMode,
   tunnelClient?: TunnelClient,
   remoteAppConfig?: AppConfigurationUsedByCli,
 ) {
@@ -296,14 +327,23 @@ async function setupNetworkingOptions(
 
   await validateCustomPorts(webs, graphiqlPort)
 
+  const frontendUrlOptions: FrontendURLOptions =
+    tunnelOptions.mode === 'use-localhost'
+      ? {
+          noTunnelUseLocalhost: true,
+          port: tunnelOptions.actualPort,
+        }
+      : {
+          noTunnelUseLocalhost: false,
+          tunnelUrl: tunnelOptions.mode === 'custom' ? tunnelOptions.url : undefined,
+          tunnelClient,
+        }
+
   // generateFrontendURL still uses the old naming of frontendUrl and frontendPort,
   // we can rename them to proxyUrl and proxyPort when we delete dev.ts
   const [{frontendUrl, frontendPort: proxyPort, usingLocalhost}, backendPort, currentUrls] = await Promise.all([
-    generateFrontendURL({
-      ...frontEndOptions,
-      tunnelClient,
-    }),
-    getBackendPort() || backendConfig?.configuration.port || getAvailableTCPPort(),
+    generateFrontendURL(frontendUrlOptions),
+    getBackendPort() ?? backendConfig?.configuration.port ?? getAvailableTCPPort(),
     getURLs(remoteAppConfig),
   ])
   const proxyUrl = usingLocalhost ? `${frontendUrl}:${proxyPort}` : frontendUrl
@@ -317,6 +357,20 @@ async function setupNetworkingOptions(
   }
   frontendPort = frontendPort ?? (await getAvailableTCPPort())
 
+  let reverseProxyCert
+  if (tunnelOptions.mode === 'use-localhost') {
+    const {keyContent, certContent, certPath} = await generateCertificate({
+      appDirectory,
+    })
+
+    reverseProxyCert = {
+      key: keyContent,
+      cert: certContent,
+      certPath,
+      port: tunnelOptions.actualPort,
+    }
+  }
+
   return {
     proxyUrl,
     proxyPort,
@@ -324,6 +378,7 @@ async function setupNetworkingOptions(
     backendPort,
     currentUrls,
     webs,
+    reverseProxyCert,
   }
 }
 
@@ -332,11 +387,13 @@ async function launchDevProcesses({
   previewUrl,
   graphiqlUrl,
   config,
+  devSessionStatusManager,
 }: {
   processes: DevProcesses
   previewUrl: string
   graphiqlUrl: string | undefined
   config: DevConfig
+  devSessionStatusManager: DevSessionStatusManager
 }) {
   const abortController = new AbortController()
   const processesForTaskRunner: OutputProcess[] = processes.map((process) => {
@@ -377,55 +434,32 @@ async function launchDevProcesses({
     abortController,
     developerPreview: developerPreviewController(apiKey, developerPlatformClient),
     shopFqdn: config.storeFqdn,
+    devSessionStatusManager,
+    appURL: config.localApp.devApplicationURLs?.applicationUrl,
+    appName: config.remoteApp.title,
+    organizationName: config.commandOptions.organization.businessName,
+    configPath: config.localApp.configuration.path,
   })
 }
 
-export function developerPreviewController(
+function developerPreviewController(
   apiKey: string,
   developerPlatformClient: DeveloperPlatformClient,
 ): DeveloperPreviewController {
   if (developerPlatformClient.supportsDevSessions) {
     return {
       fetchMode: () => Promise.resolve(false),
-      enable: () => Promise.resolve(),
+      enable: () => Promise.resolve(false),
       disable: () => Promise.resolve(),
       update: () => Promise.resolve(false),
     }
   }
 
-  const refreshToken = async () => {
-    await developerPlatformClient.refreshToken()
-  }
-
-  const withRefreshToken = async <T>(
-    fn: (developerPlatformClient: DeveloperPlatformClient) => Promise<T>,
-  ): Promise<T> => {
-    try {
-      const result = await performActionWithRetryAfterRecovery(async () => fn(developerPlatformClient), refreshToken)
-      return result
-    } catch (err) {
-      outputDebug('Failed to refresh token')
-      throw err
-    }
-  }
-
   return {
-    fetchMode: async () =>
-      withRefreshToken(async (developerPlatformClient: DeveloperPlatformClient) =>
-        Boolean(await fetchAppPreviewMode(apiKey, developerPlatformClient)),
-      ),
-    enable: async () =>
-      withRefreshToken(async (developerPlatformClient: DeveloperPlatformClient) => {
-        await enableDeveloperPreview({apiKey, developerPlatformClient})
-      }),
-    disable: async () =>
-      withRefreshToken(async (developerPlatformClient: DeveloperPlatformClient) => {
-        await disableDeveloperPreview({apiKey, developerPlatformClient})
-      }),
-    update: async (state: boolean) =>
-      withRefreshToken(async (developerPlatformClient: DeveloperPlatformClient) =>
-        developerPreviewUpdate({apiKey, developerPlatformClient, enabled: state}),
-      ),
+    fetchMode: async () => Boolean(await fetchAppPreviewMode(apiKey, developerPlatformClient)),
+    enable: async () => enableDeveloperPreview({apiKey, developerPlatformClient}),
+    disable: async () => disableDeveloperPreview({apiKey, developerPlatformClient}),
+    update: async (state: boolean) => developerPreviewUpdate({apiKey, developerPlatformClient, enabled: state}),
   }
 }
 
@@ -476,13 +510,9 @@ async function validateCustomPorts(webConfigs: Web[], graphiqlPort: number) {
       const portAvailable = await checkPortAvailability(graphiqlPort)
       if (!portAvailable) {
         const errorMessage = `Port ${graphiqlPort} is not available for serving GraphiQL.`
-        const tryMessage = ['Choose a different port by setting the', {command: '--graphiql-port'}, 'flag.']
+        const tryMessage = ['Choose a different port for the', {command: '--graphiql-port'}, 'flag.']
         throw new AbortError(errorMessage, tryMessage)
       }
     })(),
   ])
-}
-
-function setPreviousAppId(directory: string, apiKey: string) {
-  setCachedAppInfo({directory, previousAppId: apiKey})
 }

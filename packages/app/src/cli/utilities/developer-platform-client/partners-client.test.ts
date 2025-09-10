@@ -1,7 +1,7 @@
 import {PartnersClient} from './partners-client.js'
 import {CreateAppQuery} from '../../api/graphql/create_app.js'
 import {AppInterface, WebType} from '../../models/app/app.js'
-import {Organization, OrganizationStore} from '../../models/organization.js'
+import {Organization, OrganizationSource, OrganizationStore} from '../../models/organization.js'
 import {
   testPartnersUserSession,
   testApp,
@@ -10,7 +10,6 @@ import {
 } from '../../models/app/app.test-data.js'
 import {appNamePrompt} from '../../prompts/dev.js'
 import {FindOrganizationQuery} from '../../api/graphql/find_org.js'
-import {NoOrgError} from '../../services/dev/fetch.js'
 import {partnersRequest} from '@shopify/cli-kit/node/api/partners'
 import {describe, expect, vi, test} from 'vitest'
 
@@ -32,11 +31,13 @@ const LOCAL_APP: AppInterface = testApp({
   name: 'my-app',
 })
 
-const ORG1: Organization = {
+type OrganizationInPartnersResponse = Omit<Organization, 'source'>
+
+const ORG1: OrganizationInPartnersResponse = {
   id: '1',
   businessName: 'org1',
 }
-const ORG2: Organization = {
+const ORG2: OrganizationInPartnersResponse = {
   id: '2',
   businessName: 'org2',
 }
@@ -56,6 +57,7 @@ const STORE1: OrganizationStore = {
   shopName: 'store1',
   transferDisabled: false,
   convertableToPartnerTest: false,
+  provisionable: true,
 }
 
 const FETCH_ORG_RESPONSE_VALUE = {
@@ -88,14 +90,22 @@ describe('createApp', () => {
     }
 
     // When
-    const got = await partnersClient.createApp(ORG1, localApp.name, {
-      scopesArray: ['write_products'],
-      isLaunchable: true,
-    })
+    const got = await partnersClient.createApp(
+      {...ORG1, source: OrganizationSource.Partners},
+      {
+        name: localApp.name,
+        scopesArray: ['write_products'],
+        isLaunchable: true,
+        directory: '',
+      },
+    )
 
     // Then
     expect(got).toEqual({...APP1, newApp: true, developerPlatformClient: partnersClient})
-    expect(partnersRequest).toHaveBeenCalledWith(CreateAppQuery, 'token', variables)
+    expect(partnersRequest).toHaveBeenCalledWith(CreateAppQuery, 'token', variables, undefined, undefined, {
+      type: 'token_refresh',
+      handler: expect.any(Function),
+    })
   })
 
   test('creates an app with non-launchable defaults', async () => {
@@ -113,14 +123,21 @@ describe('createApp', () => {
     }
 
     // When
-    const got = await partnersClient.createApp(ORG1, LOCAL_APP.name, {
-      isLaunchable: false,
-      scopesArray: ['write_products'],
-    })
+    const got = await partnersClient.createApp(
+      {...ORG1, source: OrganizationSource.Partners},
+      {
+        name: LOCAL_APP.name,
+        isLaunchable: false,
+        scopesArray: ['write_products'],
+      },
+    )
 
     // Then
     expect(got).toEqual({...APP1, newApp: true, developerPlatformClient: partnersClient})
-    expect(partnersRequest).toHaveBeenCalledWith(CreateAppQuery, 'token', variables)
+    expect(partnersRequest).toHaveBeenCalledWith(CreateAppQuery, 'token', variables, undefined, undefined, {
+      type: 'token_refresh',
+      handler: expect.any(Function),
+    })
   })
 
   test('throws error if requests has a user error', async () => {
@@ -132,7 +149,7 @@ describe('createApp', () => {
     })
 
     // When
-    const got = partnersClient.createApp(ORG2, LOCAL_APP.name)
+    const got = partnersClient.createApp({...ORG2, source: OrganizationSource.Partners}, {name: LOCAL_APP.name})
 
     // Then
     await expect(got).rejects.toThrow(`some-error`)
@@ -151,7 +168,10 @@ describe('fetchApp', async () => {
 
     // Then
     expect(got).toEqual({organization: partnerMarkedOrg, apps: [APP1, APP2], hasMorePages: false})
-    expect(partnersRequest).toHaveBeenCalledWith(FindOrganizationQuery, 'token', {id: ORG1.id})
+    expect(partnersRequest).toHaveBeenCalledWith(FindOrganizationQuery, 'token', {id: ORG1.id}, undefined, undefined, {
+      type: 'token_refresh',
+      handler: expect.any(Function),
+    })
   })
 
   test('throws if there are no organizations', async () => {
@@ -163,7 +183,22 @@ describe('fetchApp', async () => {
     const got = () => partnersClient.orgAndApps(ORG1.id)
 
     // Then
-    await expect(got).rejects.toThrowError(new NoOrgError(testPartnersUserSession.accountInfo))
-    expect(partnersRequest).toHaveBeenCalledWith(FindOrganizationQuery, 'token', {id: ORG1.id})
+    await expect(got).rejects.toThrow('No Organization found')
+    expect(partnersRequest).toHaveBeenCalledWith(FindOrganizationQuery, 'token', {id: ORG1.id}, undefined, undefined, {
+      type: 'token_refresh',
+      handler: expect.any(Function),
+    })
+  })
+})
+
+describe('PartnersClient', () => {
+  describe('bundleFormat', () => {
+    test('uses zip format', () => {
+      // Given
+      const client = new PartnersClient()
+
+      // Then
+      expect(client.bundleFormat).toBe('zip')
+    })
   })
 })

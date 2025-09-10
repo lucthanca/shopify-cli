@@ -15,10 +15,11 @@ import {
   LegacyAppConfiguration,
   BasicAppConfigurationWithoutModules,
   SchemaForConfig,
-  AppCreationDefaultOptions,
   AppLinkedInterface,
+  AppHiddenConfig,
+  isLegacyAppSchema,
 } from './app.js'
-import {showMultipleCLIWarningIfNeeded} from './validation/multi-cli-warning.js'
+import {parseHumanReadableError} from './error-parsing.js'
 import {configurationFileNames, dotEnvFileNames} from '../../constants.js'
 import metadata from '../../metadata.js'
 import {ExtensionInstance} from '../extensions/extension-instance.js'
@@ -26,14 +27,18 @@ import {ExtensionsArraySchema, UnifiedSchema} from '../extensions/schemas.js'
 import {ExtensionSpecification, RemoteAwareExtensionSpecification} from '../extensions/specification.js'
 import {getCachedAppInfo} from '../../services/local-storage.js'
 import use from '../../services/app/config/use.js'
-import {Flag} from '../../utilities/developer-platform-client.js'
+import {CreateAppOptions, Flag} from '../../utilities/developer-platform-client.js'
 import {findConfigFiles} from '../../prompts/config.js'
 import {WebhookSubscriptionSpecIdentifier} from '../extensions/specifications/app_config_webhook_subscription.js'
 import {WebhooksSchema} from '../extensions/specifications/app_config_webhook_schemas/webhooks_schema.js'
 import {loadLocalExtensionsSpecifications} from '../extensions/load-specifications.js'
 import {UIExtensionSchemaType} from '../extensions/specifications/ui_extension.js'
-import {deepStrict, zod} from '@shopify/cli-kit/node/schema'
+import {patchAppHiddenConfigFile} from '../../services/app/patch-app-configuration-file.js'
+import {getOrCreateAppConfigHiddenPath} from '../../utilities/app/config/hidden-app-config.js'
+import {ApplicationURLs, generateApplicationURLs} from '../../services/dev/urls.js'
+import {showMultipleCLIWarningIfNeeded} from '@shopify/cli-kit/node/multiple-installation-warning'
 import {fileExists, readFile, glob, findPathUp, fileExistsSync} from '@shopify/cli-kit/node/fs'
+import {zod} from '@shopify/cli-kit/node/schema'
 import {readAndParseDotEnv, DotEnvFile} from '@shopify/cli-kit/node/dot-env'
 import {
   getDependencies,
@@ -54,7 +59,13 @@ import ignore from 'ignore'
 
 const defaultExtensionDirectory = 'extensions/*'
 
-export type AppLoaderMode = 'strict' | 'report'
+/**
+ * The mode in which the app is loaded, this affects how errors are handled:
+ * - strict: If there is any kind of error, the app won't be loaded.
+ * - report: The app will be loaded as much as possible, errors will be reported afterwards.
+ * - local: Errors for unknown extensions will be ignored. Other errors will prevent the app from loading.
+ */
+export type AppLoaderMode = 'strict' | 'report' | 'local'
 
 type AbortOrReport = <T>(errorMessage: OutputMessage, fallback: T, configurationPath: string) => T
 
@@ -82,7 +93,7 @@ export async function loadConfigurationFileContent(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     // TOML errors have line, pos and col properties
-    if (err.line && err.pos && err.col) {
+    if (err.line !== undefined && err.pos !== undefined && err.col !== undefined) {
       return abortOrReport(
         outputContent`Fix the following error in ${outputToken.path(filepath)}:\n${err.message}`,
         {},
@@ -114,15 +125,6 @@ export async function parseConfigurationFile<TSchema extends zod.ZodType>(
 
   const configuration = parseConfigurationObject(schema, filepath, configurationObject, abortOrReport)
   return {...configuration, path: filepath}
-}
-
-export function parseHumanReadableError(issues: Pick<zod.ZodIssueBase, 'path' | 'message'>[]) {
-  let humanReadableError = ''
-  issues.forEach((issue) => {
-    const path = issue.path ? issue?.path.join('.') : 'n/a'
-    humanReadableError += `• [${path}]: ${issue.message}\n`
-  })
-  return humanReadableError
 }
 
 /**
@@ -213,7 +215,7 @@ export async function checkFolderIsValidApp(directory: string) {
   )
 }
 
-export async function loadConfigForAppCreation(directory: string, name: string): Promise<AppCreationDefaultOptions> {
+export async function loadConfigForAppCreation(directory: string, name: string): Promise<CreateAppOptions> {
   const state = await getAppConfigurationState(directory)
   const config: AppConfiguration = state.state === 'connected-app' ? state.basicConfiguration : state.startingOptions
   const loadedConfiguration = await loadAppConfigurationFromState(state, [], [])
@@ -221,10 +223,15 @@ export async function loadConfigForAppCreation(directory: string, name: string):
   const loader = new AppLoader({loadedConfiguration})
   const webs = await loader.loadWebs(directory)
 
+  const isLaunchable = webs.webs.some((web) => isWebType(web, WebType.Frontend) || isWebType(web, WebType.Backend))
+
   return {
-    isLaunchable: webs.webs.some((web) => isWebType(web, WebType.Frontend) || isWebType(web, WebType.Backend)),
+    isLaunchable,
     scopesArray: getAppScopesArray(config),
     name,
+    directory,
+    // By default, and ONLY for `app init`, we consider the app as embedded if it is launchable.
+    isEmbedded: isLaunchable,
   }
 }
 
@@ -342,6 +349,8 @@ class AppLoader<TConfig extends AppConfiguration, TModuleSpec extends ExtensionS
     const packageManager = this.previousApp?.packageManager ?? (await getPackageManager(directory))
     const usesWorkspaces = this.previousApp?.usesWorkspaces ?? (await appUsesWorkspaces(directory))
 
+    const hiddenConfig = await loadHiddenConfig(directory, configuration)
+
     if (!this.previousApp) {
       await showMultipleCLIWarningIfNeeded(directory, nodeDependencies)
     }
@@ -364,6 +373,8 @@ class AppLoader<TConfig extends AppConfiguration, TModuleSpec extends ExtensionS
       specifications: this.specifications,
       configSchema,
       remoteFlags: this.remoteFlags,
+      hiddenConfig,
+      devApplicationURLs: this.getDevApplicationURLs(configuration, webs),
     })
 
     // Show CLI notifications that are targetted for when your app has specific extension types
@@ -376,6 +387,8 @@ class AppLoader<TConfig extends AppConfiguration, TModuleSpec extends ExtensionS
       usedCustomLayoutForWeb,
       usedCustomLayoutForExtensions: configuration.extension_directories !== undefined,
     })
+
+    await appClass.generateExtensionTypes()
 
     return appClass
   }
@@ -451,6 +464,8 @@ class AppLoader<TConfig extends AppConfiguration, TModuleSpec extends ExtensionS
 
     if (specification) {
       usedKnownSpecification = true
+    } else if (this.mode === 'local') {
+      return undefined
     } else {
       return this.abortOrReport(
         outputContent`Invalid extension type "${type}" in "${relativizePath(configurationPath)}"`,
@@ -470,6 +485,10 @@ class AppLoader<TConfig extends AppConfiguration, TModuleSpec extends ExtensionS
       entryPath = await this.findEntryPath(directory, specification)
     }
 
+    const previousExtension = this.previousApp?.allExtensions.find((extension) => {
+      return extension.handle === configuration.handle
+    })
+
     const extensionInstance = new ExtensionInstance({
       configuration,
       configurationPath,
@@ -478,13 +497,17 @@ class AppLoader<TConfig extends AppConfiguration, TModuleSpec extends ExtensionS
       specification,
     })
 
+    if (previousExtension) {
+      // If we are reloading, keep the existing devUUID for consistency with the dev-console
+      extensionInstance.devUUID = previousExtension.devUUID
+    }
+
     if (usedKnownSpecification) {
       const validateResult = await extensionInstance.validate()
       if (validateResult.isErr()) {
         this.abortOrReport(outputContent`\n${validateResult.error}`, undefined, configurationPath)
       }
     }
-
     return extensionInstance
   }
 
@@ -509,7 +532,7 @@ class AppLoader<TConfig extends AppConfiguration, TModuleSpec extends ExtensionS
     allExtensions.forEach((extension) => {
       if (extension.handle && handles.has(extension.handle)) {
         const matchingExtensions = allExtensions.filter((ext) => ext.handle === extension.handle)
-        const result = joinWithAnd(matchingExtensions.map((ext) => ext.configuration.name))
+        const result = joinWithAnd(matchingExtensions.map((ext) => ext.name))
         const handle = outputToken.cyan(extension.handle)
 
         this.abortOrReport(
@@ -539,7 +562,16 @@ class AppLoader<TConfig extends AppConfiguration, TModuleSpec extends ExtensionS
     return configPaths.map(async (configurationPath) => {
       const directory = dirname(configurationPath)
       const obj = await loadConfigurationFileContent(configurationPath)
-      const {extensions, type} = ExtensionsArraySchema.parse(obj)
+      const parseResult = ExtensionsArraySchema.safeParse(obj)
+      if (!parseResult.success) {
+        this.abortOrReport(
+          outputContent`Invalid extension configuration at ${relativePath(appDirectory, configurationPath)}`,
+          undefined,
+          configurationPath,
+        )
+        return []
+      }
+      const {extensions, type} = parseResult.data
 
       if (extensions) {
         // If the extension is an array, it's a unified toml file.
@@ -644,12 +676,16 @@ class AppLoader<TConfig extends AppConfiguration, TModuleSpec extends ExtensionS
     const unusedKeys = Object.keys(appConfiguration)
       .filter((key) => !extensionInstancesWithKeys.some(([_, keys]) => keys.includes(key)))
       .filter((key) => {
-        const configKeysThatAreNeverModules = [...Object.keys(AppSchema.shape), 'path']
+        const configKeysThatAreNeverModules = [...Object.keys(AppSchema.shape), 'path', 'organization_id']
         return !configKeysThatAreNeverModules.includes(key)
       })
 
     if (unusedKeys.length > 0) {
-      outputDebug(outputContent`Unused keys in app configuration: ${outputToken.json(unusedKeys)}`)
+      this.abortOrReport(
+        outputContent`Unsupported section(s) in app configuration: ${unusedKeys.sort().join(', ')}`,
+        undefined,
+        appConfiguration.path,
+      )
     }
     return extensionInstancesWithKeys
       .filter(([instance]) => instance)
@@ -732,6 +768,17 @@ class AppLoader<TConfig extends AppConfiguration, TModuleSpec extends ExtensionS
           }
         })
       })
+  }
+
+  private getDevApplicationURLs(currentConfiguration: TConfig, webs: Web[]): ApplicationURLs | undefined {
+    const previousDevUrls = this.previousApp?.devApplicationURLs
+    if (!previousDevUrls || !isCurrentAppSchema(currentConfiguration)) return previousDevUrls
+
+    return generateApplicationURLs(
+      previousDevUrls.applicationUrl,
+      webs.map(({configuration}) => configuration.auth_callback_path).find((path) => path),
+      currentConfiguration.app_proxy,
+    )
   }
 }
 
@@ -839,15 +886,15 @@ export async function getAppConfigurationState(
   const {configurationPath, configurationFileName} = await getConfigurationPath(appDirectory, configName)
   const file = await loadConfigurationFileContent(configurationPath)
 
-  const configFileHasBeenLinked = isCurrentAppSchema(file as AppConfiguration)
+  const configFileHasNotBeenLinked = isLegacyAppSchema(file as AppConfiguration)
 
-  if (configFileHasBeenLinked) {
-    const parsedConfig = await parseConfigurationFile(AppSchema, configurationPath)
+  if (configFileHasNotBeenLinked) {
+    const parsedConfig = await parseConfigurationFile(LegacyAppSchema, configurationPath)
     return {
-      state: 'connected-app',
       appDirectory,
       configurationPath,
-      basicConfiguration: {
+      state: 'template-only',
+      startingOptions: {
         ...file,
         ...parsedConfig,
       },
@@ -855,12 +902,12 @@ export async function getAppConfigurationState(
       configurationFileName,
     }
   } else {
-    const parsedConfig = await parseConfigurationFile(LegacyAppSchema, configurationPath)
+    const parsedConfig = await parseConfigurationFile(AppSchema, configurationPath)
     return {
+      state: 'connected-app',
       appDirectory,
       configurationPath,
-      state: 'template-only',
-      startingOptions: {
+      basicConfiguration: {
         ...file,
         ...parsedConfig,
       },
@@ -907,11 +954,7 @@ async function loadAppConfigurationFromState<
       }
     }
 
-    const parseStrictSchemaEnabled = specifications.length > 0
     schemaForConfigurationFile = appSchema
-    if (parseStrictSchemaEnabled) {
-      schemaForConfigurationFile = deepStrict(appSchema)
-    }
   }
 
   const configuration = (await parseConfigurationFile(
@@ -1035,7 +1078,7 @@ async function getAllLinkedConfigClientIds(
 ): Promise<{[key: string]: string}> {
   const candidates = await glob(joinPath(appDirectory, appConfigurationFileNameGlob))
 
-  const entries = (
+  const entries: [string, string][] = (
     await Promise.all(
       candidates.map(async (candidateFile) => {
         const configName = basename(candidateFile)
@@ -1059,8 +1102,35 @@ async function getAllLinkedConfigClientIds(
         }
       }),
     )
-  ).filter((entry) => entry !== undefined) as [string, string][]
+  ).filter((entry) => entry !== undefined)
   return Object.fromEntries(entries)
+}
+
+export async function loadHiddenConfig(
+  appDirectory: string,
+  configuration: AppConfiguration,
+): Promise<AppHiddenConfig> {
+  if (!configuration.client_id || typeof configuration.client_id !== 'string') return {}
+
+  const hiddenConfigPath = await getOrCreateAppConfigHiddenPath(appDirectory)
+
+  try {
+    const allConfigs: {[key: string]: AppHiddenConfig} = JSON.parse(await readFile(hiddenConfigPath))
+    const currentAppConfig = allConfigs[configuration.client_id]
+
+    if (currentAppConfig) return currentAppConfig
+
+    // Migration from legacy format, can be safely removed in version >=3.77
+    const oldConfig = allConfigs.dev_store_url
+    if (oldConfig !== undefined && typeof oldConfig === 'string') {
+      await patchAppHiddenConfigFile(hiddenConfigPath, configuration.client_id, {dev_store_url: oldConfig})
+      return {dev_store_url: oldConfig}
+    }
+    return {}
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch {
+    return {}
+  }
 }
 
 export async function loadAppName(appDirectory: string): Promise<string> {
@@ -1155,7 +1225,8 @@ async function logMetadataForLoadedAppUsingRawValues(
       if (extensionsBreakdownMapping[extension.type] === undefined) {
         extensionsBreakdownMapping[extension.type] = 1
       } else {
-        extensionsBreakdownMapping[extension.type]++
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        extensionsBreakdownMapping[extension.type]!++
       }
     }
 

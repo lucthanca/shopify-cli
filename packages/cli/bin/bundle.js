@@ -24,6 +24,8 @@ const external = [
 // yoga wasm file is not bundled by esbuild, so we need to copy it manually
 const yogafile = glob.sync('../../node_modules/.pnpm/**/yoga.wasm')[0]
 
+const wasmTomlPatchFile = glob.sync('../../node_modules/.pnpm/**/toml_patch_bg.wasm')[0]
+
 // Find theme-check-node's config yml files
 const themePath = require.resolve('@shopify/theme-check-node')
 const configYmlPath = joinPath(themePath, '..', '..', 'configs/*.yml')
@@ -44,6 +46,8 @@ esBuild({
     // Necessary for theme-check-node to work
     'process.env.WEBPACK_MODE': 'true',
     'import.meta.vitest': 'false',
+    // Injected during build to detect fork vs original repo
+    'process.env.SHOPIFY_CLI_BUILD_REPO': JSON.stringify(process.env.SHOPIFY_CLI_BUILD_REPO || 'unknown'),
   },
   inject: ['../../bin/bundling/cjs-shims.js'],
   external,
@@ -72,6 +76,10 @@ esBuild({
           to: ['./dist/assets'],
         },
         {
+          from: ['../theme/assets/**/*'],
+          to: ['./dist/assets'],
+        },
+        {
           from: ['../app/templates/**/*'],
           to: ['./dist/templates'],
         },
@@ -85,6 +93,10 @@ esBuild({
         },
         {
           from: [yogafile],
+          to: ['./dist/'],
+        },
+        {
+          from: [wasmTomlPatchFile],
           to: ['./dist/'],
         },
         {

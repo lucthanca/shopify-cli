@@ -19,7 +19,7 @@ export interface themepush {
   '-e, --environment <value>'?: string
 
   /**
-   * Skip downloading the specified files (Multiple flags allowed).
+   * Skip uploading the specified files (Multiple flags allowed). Wrap the value in double quotes if you're using wildcards.
    * @environment SHOPIFY_FLAG_IGNORE
    */
   '-x, --ignore <value>'?: string
@@ -49,7 +49,7 @@ export interface themepush {
   '-n, --nodelete'?: ''
 
   /**
-   * Download only the specified files (Multiple flags allowed).
+   * Upload only the specified files (Multiple flags allowed). Wrap the value in double quotes if you're using wildcards.
    * @environment SHOPIFY_FLAG_ONLY
    */
   '-o, --only <value>'?: string
@@ -61,7 +61,7 @@ export interface themepush {
   '--password <value>'?: string
 
   /**
-   * The path to your theme directory.
+   * The path where you want to run the command. Defaults to the current working directory.
    * @environment SHOPIFY_FLAG_PATH
    */
   '--path <value>'?: string

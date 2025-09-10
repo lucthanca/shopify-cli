@@ -1,16 +1,20 @@
+import {getShouldRenderTarget} from './ui_extension.js'
 import * as loadLocales from '../../../utilities/extensions/locales-configuration.js'
 import {ExtensionInstance} from '../extension-instance.js'
 import {loadLocalExtensionsSpecifications} from '../load-specifications.js'
 import {placeholderAppConfiguration} from '../../app/app.test-data.js'
-import {inTemporaryDirectory, mkdir, touchFile} from '@shopify/cli-kit/node/fs'
+import {AssetIdentifier} from '../specification.js'
+import {inTemporaryDirectory, touchFile, writeFile, mkdir, fileExistsSync} from '@shopify/cli-kit/node/fs'
 import {joinPath} from '@shopify/cli-kit/node/path'
 import {err, ok} from '@shopify/cli-kit/node/result'
 import {zod} from '@shopify/cli-kit/node/schema'
 import {describe, expect, test, vi} from 'vitest'
+import {AbortError} from '@shopify/cli-kit/node/error'
 
 describe('ui_extension', async () => {
   interface GetUIExtensionProps {
     directory: string
+    apiVersion?: string
     extensionPoints?: {
       target: string
       module: string
@@ -18,6 +22,9 @@ describe('ui_extension', async () => {
       default_placement_reference?: string
       should_render?: {
         module: string
+      }
+      urls?: {
+        edit?: string
       }
       build_manifest?: {
         assets: {
@@ -34,13 +41,13 @@ describe('ui_extension', async () => {
     }[]
   }
 
-  async function getTestUIExtension({directory, extensionPoints}: GetUIExtensionProps) {
+  async function getTestUIExtension({directory, extensionPoints, apiVersion}: GetUIExtensionProps) {
     const configurationPath = joinPath(directory, 'shopify.extension.toml')
     const allSpecs = await loadLocalExtensionsSpecifications()
     const specification = allSpecs.find((spec) => spec.identifier === 'ui_extension')!
     const configuration = {
       extension_points: extensionPoints,
-      api_version: '2023-01' as const,
+      api_version: apiVersion ?? ('2023-01' as const),
       name: 'UI Extension',
       description: 'This is an ordinary test extension.',
       type: 'ui_extension',
@@ -58,6 +65,7 @@ describe('ui_extension', async () => {
         },
       },
       settings: {},
+      urls: {},
     }
 
     return new ExtensionInstance({
@@ -157,6 +165,7 @@ describe('ui_extension', async () => {
               },
             },
           },
+          urls: {},
         },
       ])
     })
@@ -209,6 +218,7 @@ describe('ui_extension', async () => {
           default_placement_reference: 'PLACEMENT_REFERENCE1',
           capabilities: undefined,
           preloads: {},
+          urls: {},
           build_manifest: {
             assets: {
               main: {
@@ -266,6 +276,7 @@ describe('ui_extension', async () => {
           target: 'EXTENSION::POINT::A',
           module: './src/ExtensionPointA.js',
           metafields: [],
+          urls: {},
           default_placement_reference: undefined,
           capabilities: {allow_direct_linking: true},
           preloads: {},
@@ -329,6 +340,73 @@ describe('ui_extension', async () => {
           default_placement_reference: undefined,
           capabilities: undefined,
           preloads: {chat: '/chat'},
+          urls: {},
+          build_manifest: {
+            assets: {
+              main: {
+                filepath: 'test-ui-extension.js',
+                module: './src/ExtensionPointA.js',
+              },
+            },
+          },
+        },
+      ])
+    })
+
+    test('targeting object accepts urls', async () => {
+      const allSpecs = await loadLocalExtensionsSpecifications()
+      const specification = allSpecs.find((spec) => spec.identifier === 'ui_extension')!
+      const configuration = {
+        targeting: [
+          {
+            target: 'EXTENSION::POINT::A',
+            module: './src/ExtensionPointA.js',
+            preloads: {chat: '/chat', not_supported: '/hello'},
+            urls: {
+              edit: '/bundles/products/101',
+            },
+          },
+        ],
+        api_version: '2023-01' as const,
+        name: 'UI Extension',
+        description: 'This is an ordinary test extension',
+        type: 'ui_extension',
+        handle: 'test-ui-extension',
+        capabilities: {
+          block_progress: false,
+          network_access: false,
+          api_access: false,
+          collect_buyer_consent: {
+            customer_privacy: true,
+            sms_marketing: false,
+          },
+          iframe: {
+            sources: [],
+          },
+        },
+        settings: {},
+      }
+
+      // When
+      const parsed = specification.parseConfigurationObject(configuration)
+      if (parsed.state !== 'ok') {
+        throw new Error("Couldn't parse configuration")
+      }
+
+      const got = parsed.data
+
+      // Then
+      expect(got.extension_points).toStrictEqual([
+        {
+          target: 'EXTENSION::POINT::A',
+          module: './src/ExtensionPointA.js',
+          metafields: [],
+          default_placement_reference: undefined,
+          capabilities: undefined,
+          preloads: {chat: '/chat'},
+          urls: {
+            edit: '/bundles/products/101',
+          },
           build_manifest: {
             assets: {
               main: {
@@ -404,6 +482,7 @@ describe('ui_extension', async () => {
               },
             },
           },
+          urls: {},
         },
       ])
     })
@@ -618,6 +697,78 @@ Please check the configuration in ${uiExtension.configurationPath}`),
         expect(stdInContent).toContain(`import './src/ExtensionPointB.js';`)
       })
     })
+
+    test('includes shopify.extend calls for all targets including should-render for Remote DOM API versions', async () => {
+      await inTemporaryDirectory(async (tmpDir) => {
+        // Given
+        const uiExtension = await getTestUIExtension({
+          directory: tmpDir,
+          // Remote DOM supported API version
+          apiVersion: '2025-10',
+          extensionPoints: [
+            {
+              target: 'admin.product-details.action.render',
+              module: './src/ExtensionPointA.js',
+              build_manifest: {
+                assets: {
+                  main: {
+                    module: './src/ExtensionPointA.js',
+                    filepath: '/test-ui-extension.js',
+                  },
+                  should_render: {
+                    module: './src/condition/should-render.js',
+                    filepath: '/test-ui-extension-conditions.js',
+                  },
+                },
+              },
+            },
+          ],
+        })
+
+        // When
+        const stdInContent = uiExtension.getBundleExtensionStdinContent()
+
+        // Then
+        expect(stdInContent.main).toBe(
+          `import Target_0 from './src/ExtensionPointA.js';shopify.extend('admin.product-details.action.render', (...args) => Target_0(...args));`,
+        )
+
+        expect(stdInContent.assets!.find((asset) => asset.identifier === AssetIdentifier.ShouldRender)?.content).toBe(
+          `import shouldRender from './src/condition/should-render.js';shopify.extend('admin.product-details.action.should-render', (...args) => shouldRender(...args));`,
+        )
+      })
+    })
+
+    test('uses regular imports for non-Remote DOM API versions', async () => {
+      await inTemporaryDirectory(async (tmpDir) => {
+        // Given
+        const uiExtension = await getTestUIExtension({
+          directory: tmpDir,
+          // Non-Remote DOM supported API version
+          apiVersion: '2025-01',
+          extensionPoints: [
+            {
+              target: 'admin.product-details.action.render',
+              module: './src/ExtensionPointA.js',
+              build_manifest: {
+                assets: {
+                  main: {
+                    module: './src/ExtensionPointA.js',
+                    filepath: '/test-ui-extension.js',
+                  },
+                },
+              },
+            },
+          ],
+        })
+
+        // When
+        const stdInContent = uiExtension.getBundleExtensionStdinContent().main
+
+        // Then
+        expect(stdInContent).toBe(`import './src/ExtensionPointA.js';`)
+      })
+    })
   })
 
   describe('shouldFetchCartUrl()', async () => {
@@ -692,6 +843,277 @@ Please check the configuration in ${uiExtension.configurationPath}`),
 
         // Then
         expect(uiExtension.hasExtensionPointTarget('NONEXISTANT::POINT')).toBe(false)
+      })
+    })
+  })
+
+  async function setupUIExtensionWithNodeModules({
+    tmpDir,
+    fileContent,
+    shouldRenderFileContent,
+    apiVersion,
+    target = 'admin.product-details.action.render',
+  }: {
+    tmpDir: string
+    fileContent: string
+    shouldRenderFileContent?: string
+    apiVersion: string
+    target?: string
+  }) {
+    // Create extension files
+    const srcDir = joinPath(tmpDir, 'src')
+    await mkdir(srcDir)
+    const filePath = joinPath(srcDir, `index.jsx`)
+
+    await writeFile(filePath, fileContent)
+
+    // Create node_modules structure
+    const nodeModulesPath = joinPath(tmpDir, 'node_modules', '@shopify', 'ui-extensions')
+    await mkdir(nodeModulesPath)
+
+    const targetPath = joinPath(nodeModulesPath, target)
+    await mkdir(targetPath)
+    await writeFile(joinPath(targetPath, 'index.js'), '// Mock UI extension target')
+
+    let shouldRenderFilePath
+    if (shouldRenderFileContent) {
+      const shouldRenderTargetPath = joinPath(nodeModulesPath, getShouldRenderTarget(target))
+      await mkdir(shouldRenderTargetPath)
+      await writeFile(joinPath(shouldRenderTargetPath, 'index.js'), '// Mock UI extension should-render target')
+
+      const shouldRenderDir = joinPath(srcDir, 'condition')
+      await mkdir(shouldRenderDir)
+      shouldRenderFilePath = joinPath(shouldRenderDir, 'should-render.js')
+
+      await writeFile(shouldRenderFilePath, shouldRenderFileContent)
+    }
+
+    // Get UI extension spec and create instance
+    const allSpecs = await loadLocalExtensionsSpecifications()
+    const specification = allSpecs.find((spec) => spec.identifier === 'ui_extension')!
+
+    const extension = new ExtensionInstance({
+      configuration: {
+        api_version: apiVersion,
+        extension_points: [
+          {
+            target,
+            module: `./src/index.jsx`,
+            build_manifest: {
+              assets: {
+                main: {
+                  module: './src/index.jsx',
+                },
+                should_render: shouldRenderFilePath
+                  ? {
+                      module: './src/condition/should-render.js',
+                    }
+                  : undefined,
+              },
+            },
+          },
+        ],
+        name: 'Test UI Extension',
+        type: 'ui_extension',
+        metafields: [],
+      },
+      configurationPath: joinPath(tmpDir, 'shopify.extension.toml'),
+      directory: tmpDir,
+      specification,
+      entryPath: filePath,
+    })
+
+    return {
+      filePath,
+      extension,
+      shouldRenderFilePath,
+      nodeModulesPath,
+    }
+  }
+
+  describe('contributeToSharedTypeFile', () => {
+    test('sets the typeDefinitionsByFile map for both main and should-render modules when api version supports Remote DOM', async () => {
+      const typeDefinitionsByFile = new Map<string, Set<string>>()
+
+      await inTemporaryDirectory(async (tmpDir) => {
+        const {extension} = await setupUIExtensionWithNodeModules({
+          tmpDir,
+          fileContent: '// JSX code',
+          shouldRenderFileContent: '// JS code',
+          // Remote DOM supported version
+          apiVersion: '2025-10',
+        })
+        // Create tsconfig.json
+        const tsconfigPath = joinPath(tmpDir, 'tsconfig.json')
+        await writeFile(tsconfigPath, '// TypeScript config')
+
+        // When
+        await extension.contributeToSharedTypeFile?.(typeDefinitionsByFile)
+
+        const shopifyDtsPath = joinPath(tmpDir, 'shopify.d.ts')
+
+        // Then
+        expect(typeDefinitionsByFile).toStrictEqual(
+          new Map([
+            [
+              shopifyDtsPath,
+              new Set([
+                `//@ts-ignore\ndeclare module './src/index.jsx' {
+  const shopify: import('@shopify/ui-extensions/admin.product-details.action.render').Api;
+  const globalThis: { shopify: typeof shopify };
+}\n`,
+                `//@ts-ignore\ndeclare module './src/condition/should-render.js' {
+  const shopify: import('@shopify/ui-extensions/admin.product-details.action.should-render').Api;
+  const globalThis: { shopify: typeof shopify };
+}\n`,
+              ]),
+            ],
+          ]),
+        )
+      })
+    })
+
+    test('supports individual and shared tsconfig.json files when api version supports Remote DOM', async () => {
+      const typeDefinitionsByFile = new Map<string, Set<string>>()
+
+      await inTemporaryDirectory(async (tmpDir) => {
+        const {extension, nodeModulesPath} = await setupUIExtensionWithNodeModules({
+          tmpDir,
+          fileContent: '// JSX code',
+          shouldRenderFileContent: '// JS code',
+          // Remote DOM supported version
+          apiVersion: '2025-10',
+        })
+
+        // Add another target sharing the same tsconfig.json as the main target
+        const otherTarget = 'admin.orders-details.block.render'
+        const targetPath = joinPath(nodeModulesPath, otherTarget)
+        await mkdir(targetPath)
+        await writeFile(joinPath(targetPath, 'index.js'), '// Mock other target')
+        await writeFile(joinPath(tmpDir, 'src', 'another-target-module.jsx'), '// JSX code for other target')
+
+        extension.configuration.extension_points.push({
+          target: otherTarget,
+          module: './src/another-target-module.jsx',
+          build_manifest: {
+            assets: {
+              main: {
+                module: './src/another-target-module.jsx',
+              },
+            } as any,
+          },
+        })
+
+        const mainModuleTsConfigPath = joinPath(tmpDir, 'tsconfig.json')
+        await writeFile(mainModuleTsConfigPath, '// TypeScript config')
+
+        const shouldRenderModuleTsConfigPath = joinPath(tmpDir, 'src', 'condition', 'tsconfig.json')
+        await writeFile(shouldRenderModuleTsConfigPath, '// TypeScript config')
+
+        // When
+        await extension.contributeToSharedTypeFile?.(typeDefinitionsByFile)
+
+        // Then
+        expect(typeDefinitionsByFile).toStrictEqual(
+          new Map([
+            [
+              joinPath(tmpDir, 'shopify.d.ts'),
+              new Set([
+                `//@ts-ignore\ndeclare module './src/index.jsx' {
+  const shopify: import('@shopify/ui-extensions/admin.product-details.action.render').Api;
+  const globalThis: { shopify: typeof shopify };
+}\n`,
+                `//@ts-ignore\ndeclare module './src/another-target-module.jsx' {
+  const shopify: import('@shopify/ui-extensions/admin.orders-details.block.render').Api;
+  const globalThis: { shopify: typeof shopify };
+}\n`,
+              ]),
+            ],
+            [
+              joinPath(tmpDir, 'src', 'condition', 'shopify.d.ts'),
+              new Set([
+                `//@ts-ignore\ndeclare module './should-render.js' {
+  const shopify: import('@shopify/ui-extensions/admin.product-details.action.should-render').Api;
+  const globalThis: { shopify: typeof shopify };
+}\n`,
+              ]),
+            ],
+          ]),
+        )
+      })
+    })
+
+    test("throws error when when api version supports Remote DOM and there's a tsconfig.json but type reference for target could not be found", async () => {
+      const typeDefinitionsByFile = new Map<string, Set<string>>()
+
+      await inTemporaryDirectory(async (tmpDir) => {
+        const {extension} = await setupUIExtensionWithNodeModules({
+          tmpDir,
+          fileContent: '// Preact code',
+          // Remote DOM supported version
+          apiVersion: '2025-10',
+        })
+
+        // Create tsconfig.json file for testing
+        const mainModuleTsConfigPath = joinPath(tmpDir, 'tsconfig.json')
+        await writeFile(mainModuleTsConfigPath, '// TypeScript config')
+
+        // Change target to a target that does not exist in the library
+        extension.configuration.extension_points[0]!.target = 'admin.unknown.action.render'
+
+        // When
+        await expect(extension.contributeToSharedTypeFile?.(typeDefinitionsByFile)).rejects.toThrow(
+          new AbortError(
+            'Type reference for admin.unknown.action.render could not be found. You might be using the wrong @shopify/ui-extensions version.',
+            'Fix the error by ensuring you have the correct version of @shopify/ui-extensions, for example 2025.10.0, in your dependencies.',
+          ),
+        )
+
+        // No shopify.d.ts file should be created
+        expect(fileExistsSync(joinPath(tmpDir, 'shopify.d.ts'))).toBe(false)
+      })
+    })
+
+    test('does not throw error when when api version supports Remote DOM but there is no tsconfig.json', async () => {
+      const typeDefinitionsByFile = new Map<string, Set<string>>()
+
+      await inTemporaryDirectory(async (tmpDir) => {
+        const {extension} = await setupUIExtensionWithNodeModules({
+          tmpDir,
+          fileContent: '// Preact code',
+          // Remote DOM supported version
+          apiVersion: '2025-10',
+        })
+
+        // Change target to a target that does not exist in the library
+        extension.configuration.extension_points[0]!.target = 'admin.unknown.action.render'
+
+        // When
+        await expect(extension.contributeToSharedTypeFile?.(typeDefinitionsByFile)).resolves.not.toThrow()
+
+        // No shopify.d.ts file should be created
+        expect(fileExistsSync(joinPath(tmpDir, 'shopify.d.ts'))).toBe(false)
+      })
+    })
+
+    test('does not set the typeDefinitionsByFile map when api version does not support Remote DOM', async () => {
+      const typeDefinitionsByFile = new Map<string, Set<string>>()
+      await inTemporaryDirectory(async (tmpDir) => {
+        const {extension, filePath} = await setupUIExtensionWithNodeModules({
+          tmpDir,
+          fileContent: '// TypeScript React code',
+          // Non-Remote DOM supported version
+          apiVersion: '2025-01',
+        })
+
+        // When
+        await extension.contributeToSharedTypeFile?.(typeDefinitionsByFile)
+
+        // Then
+        expect(typeDefinitionsByFile).toStrictEqual(new Map())
+
+        // No shopify.d.ts file should be created
+        expect(fileExistsSync(joinPath(tmpDir, 'shopify.d.ts'))).toBe(false)
       })
     })
   })

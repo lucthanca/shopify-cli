@@ -5,8 +5,7 @@ import {patchEnvFile} from '@shopify/cli-kit/node/dot-env'
 import {constantize} from '@shopify/cli-kit/common/string'
 import {joinPath} from '@shopify/cli-kit/node/path'
 import {fileExists, readFile, writeFile} from '@shopify/cli-kit/node/fs'
-import {deepCompare, getPathValue} from '@shopify/cli-kit/common/object'
-import {decodeToml} from '@shopify/cli-kit/node/toml'
+import {deepCompare} from '@shopify/cli-kit/common/object'
 import type {AppInterface} from './app.js'
 
 export interface IdentifiersExtensions {
@@ -34,7 +33,7 @@ export interface Identifiers {
 }
 
 type UuidOnlyIdentifiers = Omit<Identifiers, 'extensionIds' | 'extensionsNonUuidManaged'>
-type UpdateAppIdentifiersCommand = 'dev' | 'deploy' | 'release'
+type UpdateAppIdentifiersCommand = 'dev' | 'deploy' | 'release' | 'import-extensions'
 interface UpdateAppIdentifiersOptions {
   app: AppInterface
   identifiers: UuidOnlyIdentifiers
@@ -51,14 +50,6 @@ export async function updateAppIdentifiers(
   {app, identifiers, command, developerPlatformClient}: UpdateAppIdentifiersOptions,
   systemEnvironment = process.env,
 ): Promise<AppInterface> {
-  if (developerPlatformClient.supportsAtomicDeployments) {
-    // We can't update the TOML files in parallel because some extensions might share the same file
-    for (const extension of app.allExtensions) {
-      // eslint-disable-next-line no-await-in-loop
-      await addUidToToml(extension)
-    }
-  }
-
   let dotenvFile = app.dotenv
 
   if (!dotenvFile) {
@@ -80,7 +71,12 @@ export async function updateAppIdentifiers(
   })
 
   const contentIsEqual = deepCompare(dotenvFile.variables, updatedVariables)
-  const writeToFile = !contentIsEqual && (command === 'deploy' || command === 'release')
+  const writeToFile =
+    (!contentIsEqual &&
+      (command === 'deploy' || command === 'release') &&
+      !developerPlatformClient.supportsAtomicDeployments) ||
+    command === 'import-extensions'
+
   dotenvFile.variables = updatedVariables
 
   if (writeToFile) {
@@ -88,38 +84,12 @@ export async function updateAppIdentifiers(
     const envFileContent = dotEnvFileExists ? await readFile(dotenvFile.path) : ''
     const updatedEnvFileContent = patchEnvFile(envFileContent, updatedVariables)
     await writeFile(dotenvFile.path, updatedEnvFileContent)
+
+    // eslint-disable-next-line require-atomic-updates
+    app.dotenv = dotenvFile
   }
 
-  // eslint-disable-next-line require-atomic-updates
-  app.dotenv = dotenvFile
   return app
-}
-
-async function addUidToToml(extension: ExtensionInstance) {
-  if (!extension.isUUIDStrategyExtension) return
-
-  const tomlContents = await readFile(extension.configurationPath)
-  const extensionConfig = decodeToml(tomlContents)
-  const extensions = getPathValue(extensionConfig, 'extensions') as ExtensionInstance[]
-
-  if ('uid' in extensionConfig) return
-  if (extensions) {
-    const currentExtension = extensions.find((ext) => ext.handle === extension.handle)
-    if (currentExtension && 'uid' in currentExtension) return
-  }
-
-  let updatedTomlContents = tomlContents
-  if (extensions?.length > 1) {
-    // If the TOML has multiple extensions, we look for the correct handle to add the uid below
-    const regex = new RegExp(`(\\n?(\\s*)handle\\s*=\\s*"${extension.handle}")`)
-    updatedTomlContents = tomlContents.replace(regex, `$1\n$2uid = "${extension.uid}"`)
-  } else {
-    // If the TOML has only one extension, we add the uid before the type, which is always present
-    if ('uid' in extensionConfig) return
-    const regex = /\n?((\s*)type\s*=\s*"\S*")/
-    updatedTomlContents = tomlContents.replace(regex, `$2\nuid = "${extension.uid}"\n$1`)
-  }
-  await writeFile(extension.configurationPath, updatedTomlContents)
 }
 
 interface GetAppIdentifiersOptions {
@@ -131,7 +101,6 @@ interface GetAppIdentifiersOptions {
  */
 export function getAppIdentifiers(
   {app}: GetAppIdentifiersOptions,
-  developerPlatformClient: DeveloperPlatformClient,
   systemEnvironment = process.env,
 ): Partial<UuidOnlyIdentifiers> {
   const envVariables = {
@@ -143,9 +112,6 @@ export function getAppIdentifiers(
     if (Object.keys(envVariables).includes(extension.idEnvironmentVariableName)) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       extensionsIdentifiers[extension.localIdentifier] = envVariables[extension.idEnvironmentVariableName]!
-    }
-    if (developerPlatformClient.supportsAtomicDeployments) {
-      extensionsIdentifiers[extension.localIdentifier] = extension.uid
     }
   }
   app.allExtensions.forEach(processExtension)

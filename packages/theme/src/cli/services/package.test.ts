@@ -18,6 +18,8 @@ describe('packageTheme', () => {
         'assets/base.css',
         'layout/theme.liquid',
         'config/settings_schema.json',
+        'listings/canine-gourmand/sections/header-group.json',
+        'listings/dawn/templates/index.json',
         'release-notes.md',
         'update_extension.json',
       ]
@@ -90,6 +92,7 @@ describe('packageTheme', () => {
       await mkdir(inputDirectory)
       const themeRelativePaths = [
         'assets/base.css',
+        'blocks/product-grid.liquid',
         'layout/theme.liquid',
         'config/settings_schema.json',
         'release-notes.md',
@@ -188,7 +191,10 @@ async function readArchiveFiles(zipPath: string) {
   await expect(fileExists(zipPath)).resolves.toBeTruthy()
   // eslint-disable-next-line @babel/new-cap
   const archive = new StreamZip.async({file: zipPath})
-  const archiveEntries = Object.keys(await archive.entries())
+  const entries = await archive.entries()
+  const archiveEntries = Object.values(entries)
+    .filter((entry: any) => !entry.isDirectory)
+    .map((entry: any) => entry.name)
   await archive.close()
 
   return archiveEntries

@@ -1,22 +1,358 @@
 # @shopify/app
 
-## 3.72.2
+## 3.84.1
 
 ### Patch Changes
 
-- Updated dependencies [1f0508f1a7]
-  - @shopify/theme@3.72.2
-  - @shopify/cli-kit@3.72.2
-  - @shopify/plugin-cloudflare@3.72.2
+- 8f35726: Fix matching logic for some extensions with Dev Dash
+- 036a50d: Better handling on import-extensions with existing folder
+- 1adb4d5: Dont delete env files after migrating to dev dash
+- c09730c: Fix deeplink URL after a deploy
+- Updated dependencies [cd1b5ac]
+  - @shopify/theme@3.84.1
+  - @shopify/cli-kit@3.84.1
+  - @shopify/plugin-cloudflare@3.84.1
 
-## 3.72.1
+## 3.84.0
+
+### Minor Changes
+
+- 6efb593: Relative app proxy urls. App proxy url values that start with / are automatically prepended with the application_url
 
 ### Patch Changes
 
-- 35be492d91: Fix target subdomains when importing legacy links
-  - @shopify/cli-kit@3.72.1
-  - @shopify/theme@3.72.1
-  - @shopify/plugin-cloudflare@3.72.1
+- f3d3326: Added an app information box to the `app dev` command, to make current app information more accessible. Press 'i' to access it.
+- 2c2999c: Bump theme-tools packages
+- Updated dependencies [1f4fd78]
+- Updated dependencies [e301450]
+- Updated dependencies [9b872dc]
+- Updated dependencies [b382a89]
+- Updated dependencies [d2ad0b4]
+- Updated dependencies [864c687]
+- Updated dependencies [828bf47]
+- Updated dependencies [b47f879]
+- Updated dependencies [1161f7a]
+- Updated dependencies [52f999f]
+- Updated dependencies [281b50b]
+- Updated dependencies [4839fb0]
+- Updated dependencies [40e2d6f]
+- Updated dependencies [45ff625]
+- Updated dependencies [2c2999c]
+- Updated dependencies [f330c9f]
+- Updated dependencies [d19e3d7]
+- Updated dependencies [bfc6325]
+- Updated dependencies [62d6b9a]
+- Updated dependencies [9dd353c]
+- Updated dependencies [a12a7cc]
+  - @shopify/theme@3.84.0
+  - @shopify/cli-kit@3.84.0
+  - @shopify/plugin-cloudflare@3.84.0
+
+## 3.83.0
+
+### Minor Changes
+
+- e66b6e3: Opt-out removed for validation of unsupported app configuration sections
+- 0718cf2: Remove opt-out of TOML patching with SHOPIFY_CLI_DISABLE_WASM_TOML_PATCH
+- 39dbde0: Add `--no-build` flag to `shopify app deploy`. When provided, the deploy command will assume you have already run `shopify app build` or otherwise put build files in place.
+
+### Patch Changes
+
+- 478adc7: Make dev store creation link clickable
+- 5349676: Fix issue in `app build` when the app has certain extension types
+- 4ff98f1: Bump theme-tools packages
+- Updated dependencies [bb061b9]
+- Updated dependencies [521fb07]
+- Updated dependencies [b1feb1d]
+- Updated dependencies [ee353e9]
+- Updated dependencies [f4f29ec]
+- Updated dependencies [4ff98f1]
+- Updated dependencies [e73e9a5]
+  - @shopify/theme@3.83.0
+  - @shopify/cli-kit@3.83.0
+  - @shopify/plugin-cloudflare@3.83.0
+
+## 3.82.0
+
+### Minor Changes
+
+- 386bf0e: Add support for displaying UI Extension dev logs
+- d691457: Unsupported sections in your app.toml file will present a validation error. Opt-out with SHOPIFY_CLI_DISABLE_UNSUPPORTED_CONFIG_PROPERTY_CHECKS.
+
+### Patch Changes
+
+- c487f84: Fixes the `Encryption certificate fingerprint can't be blank` error when generating a custom credit card payments extension with the `shopify app generate extension` command.
+- b9683e0: Adds a validation to prevent app-specific webhooks and legacy install flow
+- Updated dependencies [02b417b]
+- Updated dependencies [0edf793]
+- Updated dependencies [9b52391]
+- Updated dependencies [5188073]
+- Updated dependencies [4176bf5]
+- Updated dependencies [c9c07b5]
+- Updated dependencies [eee4978]
+  - @shopify/theme@3.82.0
+  - @shopify/cli-kit@3.82.0
+  - @shopify/plugin-cloudflare@3.82.0
+
+## 3.81.1
+
+### Patch Changes
+
+- Updated dependencies [b838f21]
+  - @shopify/theme@3.81.1
+  - @shopify/cli-kit@3.81.1
+  - @shopify/plugin-cloudflare@3.81.1
+
+## 3.81.0
+
+### Minor Changes
+
+- 4aab034: Use @shopify/toml-patch for TOML updates; Opt out via SHOPIFY_CLI_DISABLE_WASM_TOML_PATCH
+- eb19684: Removed overrides for SHOPIFY_CLI_NO_THEME_BUNDLING and SHOPIFY_CLI_BUNDLED_THEME_CLI
+- 24aa2dd: Drop support for Node 18
+- ce3dfdc: Print all log messages to stderr instead of stdout
+
+### Patch Changes
+
+- 0c2911e: Adjust phrasing in CLI for the Remix templates from Early Access to Release Candidate
+- d192947: Minify JS extensions by default on app dev. To opt-out: SHOPIFY_CLI_DISABLE_MINIFICATION_ON_DEV=1
+- c20381f: Update error message when types for the target cannot be found in the installed @shopify/ui-extensions version
+- 933a2f8: Fix type definition generation for POLARIS_UNIFIED extensions
+- Updated dependencies [c39ba5e]
+- Updated dependencies [e18c9f6]
+- Updated dependencies [dc78463]
+- Updated dependencies [23d4b0b]
+- Updated dependencies [451a3a8]
+- Updated dependencies [16406ae]
+- Updated dependencies [eb19684]
+- Updated dependencies [24aa2dd]
+- Updated dependencies [53c2a92]
+- Updated dependencies [642bb3e]
+- Updated dependencies [ce3dfdc]
+- Updated dependencies [219e6d1]
+- Updated dependencies [9a9e51e]
+  - @shopify/theme@3.81.0
+  - @shopify/cli-kit@3.81.0
+  - @shopify/plugin-cloudflare@3.81.0
+
+## 3.80.0
+
+### Minor Changes
+
+- 16fb774: Adding trampolining process during function build to guest modules using the Wasm API to allow for it to copy data between the memory of the provider and guest modules.
+- a6d28e0: Add new Remix templates behind the `POLARIS_UNIFIED` environment variable
+- 6fcf4d4: Made the `--use-localhost` and `--localhost-port` flags public for the `shopify app dev` command
+
+  When the `--use-localhost` flag is present a tunnel won't be used. Instead, the app will be loaded using https localhost. A self-signed cert will be generated using mkcert. This flag is not compatible with Shopify features which directly invoke your app (such as Webhooks, App proxy, and Flow actions), or those which require testing your app from another'.
+
+  `--use-localhost` will always try to use port 3458. If port 3458 is not available the CLI will warn the user and automaticlly select a different port. Alternatively use the `--localhost-port` flag to specify that you want to develop using localhost on a specific port. For example: `shopify app dev --localhost-port=4000`.
+
+### Patch Changes
+
+- 9ccf6fa: Fixes editor extension collection validation being run on generate
+- a5ff255: Use terminal hyperlinks for `app dev` preview and GraphiQL links.
+- aebbc75: Fix: Pin GraphiQL CSS version to match JS version
+- c3a5189: Bug-fix: Handling mis-configured extension TOML files
+- acc904f: Bump Shopify/theme-tools packages to
+
+  - Fix validation for static blocks in JSON templates
+  - Introduce ability the disable theme checks for the next Liquid statement
+
+- Updated dependencies [0cc639e]
+- Updated dependencies [c2673be]
+- Updated dependencies [431fd6e]
+- Updated dependencies [431fd6e]
+- Updated dependencies [9cae395]
+- Updated dependencies [8422004]
+- Updated dependencies [737c9ab]
+- Updated dependencies [eaa8b7c]
+- Updated dependencies [44e8bc7]
+- Updated dependencies [6517e43]
+- Updated dependencies [ae9e30d]
+- Updated dependencies [acc904f]
+  - @shopify/cli-kit@3.80.0
+  - @shopify/theme@3.80.0
+  - @shopify/plugin-cloudflare@3.80.0
+
+## 3.79.0
+
+### Minor Changes
+
+- 7cdc129: Improved how port selection works when using localhost development
+
+  Added a `--localhost-port` flag. Use this to specify that you want to develop using localhost on a specific port. For example: `shopify app dev --localhost-port=4000`
+
+  `shopify app dev --use-localhost` will always try to use port 3458. If port 3458 is not available the CLI will warn the user and select a different port.
+
+- 68b53f6: Add support to use App Management API with CLI Tokens.
+
+### Patch Changes
+
+- 6dba2c8: Improve type definition support for POLARIS_UNIFIED extensions
+- aa85a63: Bump theme-tools packages
+- 0b1e588: Show the multiple CLI installations warning only once a day
+- 321e2e2: Enable multi-memory with wasm-opt
+- 3d0fc1a: Auto grant declared scopes during dev sessions. Replace action required message with information on granted scopes.
+- 4f17786: Prevent deploy requests from timing out
+- 8772a75: Name `apiKey` consistently, so log scrubbing will work correctly
+- a463e4b: Allow a deprecatedFromCliVersion to be configured for app management extension templates
+  Use 2025-10 as the version for remote dom UI extension
+- db8131b: Updated Binaryen version to 123.0.0
+- 5839055: Added formatting and comment preserving TOML support via @shopify/toml-patch; opt-in by setting "SHOPIFY_CLI_USE_WASM_TOML_PATCH"
+- 164bbbe: The hidden `.shopify` folder now has its own generic .gitignore file
+- e647600: Fix 401 error during the app log resubscribe process
+- d8f017d: Bump theme check & language libraries
+- e2902c9: Improve app preview messages to include store context.
+- 748f607: Fix issue when using `--reset` not creating a new config toml file
+- Updated dependencies [f9ac5cf]
+- Updated dependencies [aa85a63]
+- Updated dependencies [0b1e588]
+- Updated dependencies [94362f9]
+- Updated dependencies [4f17786]
+- Updated dependencies [036bcaf]
+- Updated dependencies [164bbbe]
+- Updated dependencies [d8f017d]
+- Updated dependencies [d9c7b4c]
+- Updated dependencies [68b53f6]
+- Updated dependencies [4134504]
+- Updated dependencies [031feb7]
+  - @shopify/cli-kit@3.79.0
+  - @shopify/theme@3.79.0
+  - @shopify/plugin-cloudflare@3.79.0
+
+## 3.78.0
+
+### Minor Changes
+
+- a50cc5e: Update 'shopify theme check'
+- 5b71f87: integrates app management client with developer dashboard endpoints for app logs
+- 04477ba: Enable support for Polaris Unified extensions using an experimental environment variable
+
+### Patch Changes
+
+- 57f1ba5: Fix the first import in shopify.d.ts to be a relative path
+  Fix the globalThis type
+- Updated dependencies [a50cc5e]
+- Updated dependencies [5c18310]
+- Updated dependencies [3ec5649]
+  - @shopify/theme@3.78.0
+  - @shopify/cli-kit@3.78.0
+  - @shopify/plugin-cloudflare@3.78.0
+
+## 3.77.0
+
+### Minor Changes
+
+- af938f8: refactors fetching app logs to the developer platform client
+- 36dccd6: Automatic cancellation of slow network requests
+
+### Patch Changes
+
+- 9f3c958: Bump `theme-check` packages
+- 4f7dcf7: Bump Shopify/theme-tools packages
+- 6a2c0a1: Added a --use-localhost flag to shopify app dev (E.g: shopify app dev --use-localhost).
+
+  When the --use-localhost flag is present a tunnel won't be used. Instead, the app will be loaded using https localhost. A self-signed cert will be generated using mkcert. This flag works for testing App Bridge, Admin UI, Checkout UI or Pixel extensions. Do not use it for testing Webhooks, Flow Action, App Proxy or POS features.
+
+  We are releasing this as a hidden flag to gather feedback. If you encounter issues, please post here: https://community.shopify.dev/new-topic?title=[Feedback%20for%20--use-localhost]&category=shopify-cli-libraries&tags=app-dev-on-localhost
+
+- 7f4a223: Update codegen graphql API for business-platform
+- Updated dependencies [dbde56d]
+- Updated dependencies [73c78ac]
+- Updated dependencies [9f3c958]
+- Updated dependencies [0d1d9ce]
+- Updated dependencies [4f7dcf7]
+- Updated dependencies [1163bb1]
+- Updated dependencies [f3f66ef]
+- Updated dependencies [36dccd6]
+  - @shopify/theme@3.77.0
+  - @shopify/cli-kit@3.77.0
+  - @shopify/plugin-cloudflare@3.77.0
+
+## 3.76.0
+
+### Patch Changes
+
+- 80a53da: Fix issue with extension devUUID being lost when app is reloaded
+  Fix issue with the extension instances being out of date in the Dev Console when app is reloaded
+- 17d5150: Fix search for dev stores prompt
+- 8c28a89: Fix an issue when re-linking an invalid but cached config file
+- Updated dependencies [fca9c19]
+- Updated dependencies [4a3895c]
+- Updated dependencies [38e8d7b]
+- Updated dependencies [0b515f3]
+- Updated dependencies [b1ed29d]
+- Updated dependencies [fa2fa08]
+- Updated dependencies [6449aa6]
+- Updated dependencies [d361f3a]
+  - @shopify/theme@3.76.0
+  - @shopify/cli-kit@3.76.0
+  - @shopify/plugin-cloudflare@3.76.0
+
+## 3.75.0
+
+### Patch Changes
+
+- 61a1a10: Improve error message in function replay command when log directory doesnt exist
+- 63192ff: Enable include_config_on_deploy by default for new apps
+- f16483e: Bump `function-runner` version to v7.0.1
+- Updated dependencies [da606a6]
+- Updated dependencies [f3498c3]
+- Updated dependencies [88ba848]
+- Updated dependencies [4aee075]
+- Updated dependencies [ab407f3]
+  - @shopify/cli-kit@3.75.0
+  - @shopify/theme@3.75.0
+  - @shopify/plugin-cloudflare@3.75.0
+
+## 3.74.0
+
+### Minor Changes
+
+- bb3b100731: Give `app info` a facelift and correct a few display bugs
+
+### Patch Changes
+
+- 2d92db780b: Add support for "variables" query param in graphiql
+- 6df2563cb8: Remove localization file size validations from the CLI and move them into Shopify's backend.
+- 4969c1f0a8: Better error message for certain types of invalid app TOML files
+- f4c7577151: Validate the @shopify/shopify_function NPM package version is compatible with the Javy version
+- f004019bb9: Utilize Admin API to determine if a storefront is password protected
+- Updated dependencies [7e34195c30]
+- Updated dependencies [b7cda8c890]
+- Updated dependencies [1b8ad07153]
+- Updated dependencies [1a5aec270d]
+- Updated dependencies [404fa77c90]
+- Updated dependencies [bb3b100731]
+- Updated dependencies [5be14a5b08]
+- Updated dependencies [369351435b]
+- Updated dependencies [6380277a7a]
+- Updated dependencies [f004019bb9]
+  - @shopify/cli-kit@3.74.0
+  - @shopify/theme@3.74.0
+  - @shopify/plugin-cloudflare@3.74.0
+
+## 3.73.0
+
+### Minor Changes
+
+- d5b69b8c24: Bump function-runner version to v7.0.0
+- adcce6d664: Use Shopify Functions Javy plugin instead of default Javy plugin for building JS Shopify Functions
+
+### Patch Changes
+
+- a92307dce8: Bump Shopify/theme-tools packages
+- 03fb93e3c9: Remove all template lockfiles, except the one used to install dependencies
+- Updated dependencies [9d47c0f5f2]
+- Updated dependencies [a92307dce8]
+- Updated dependencies [df9d347d73]
+- Updated dependencies [beab713acd]
+- Updated dependencies [beab713acd]
+- Updated dependencies [4d722c64fc]
+- Updated dependencies [03fb93e3c9]
+  - @shopify/theme@3.73.0
+  - @shopify/cli-kit@3.73.0
+  - @shopify/plugin-cloudflare@3.73.0
 
 ## 3.72.0
 

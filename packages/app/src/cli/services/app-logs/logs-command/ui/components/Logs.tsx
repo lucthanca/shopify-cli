@@ -10,6 +10,7 @@ import {
   NetworkAccessRequestExecutedLog,
 } from '../../../types.js'
 import {prettyPrintJsonIfPossible} from '../../../utils.js'
+import {DeveloperPlatformClient} from '../../../../../utilities/developer-platform-client.js'
 
 import React, {FunctionComponent} from 'react'
 
@@ -19,6 +20,8 @@ interface LogsProps {
   resubscribeCallback: () => Promise<string>
   pollOptions: PollOptions
   storeNameById: Map<string, string>
+  developerPlatformClient: DeveloperPlatformClient
+  organizationId: string
 }
 
 const getBackgroundExecutionReasonMessage = (reason: BackgroundExecutionReason): string => {
@@ -32,8 +35,21 @@ const getBackgroundExecutionReasonMessage = (reason: BackgroundExecutionReason):
   }
 }
 
-const Logs: FunctionComponent<LogsProps> = ({pollOptions: {jwtToken, filters}, resubscribeCallback, storeNameById}) => {
-  const {appLogOutputs, errors} = usePollAppLogs({filters, initialJwt: jwtToken, resubscribeCallback, storeNameById})
+const Logs: FunctionComponent<LogsProps> = ({
+  pollOptions: {jwtToken, filters},
+  resubscribeCallback,
+  storeNameById,
+  developerPlatformClient,
+  organizationId,
+}) => {
+  const {appLogOutputs, errors} = usePollAppLogs({
+    filters,
+    initialJwt: jwtToken,
+    resubscribeCallback,
+    storeNameById,
+    developerPlatformClient,
+    organizationId,
+  })
 
   return (
     <>

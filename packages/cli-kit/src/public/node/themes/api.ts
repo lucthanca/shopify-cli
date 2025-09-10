@@ -1,56 +1,146 @@
-import {storeAdminUrl} from './urls.js'
-import {composeThemeGid, parseGid} from './utils.js'
-import * as throttler from '../api/rest-api-throttler.js'
+import {composeThemeGid, parseGid, DEVELOPMENT_THEME_ROLE} from './utils.js'
+import {buildTheme} from './factories.js'
+import {Result, Checksum, Key, Theme, ThemeAsset, Operation} from './types.js'
 import {ThemeUpdate} from '../../../cli/api/graphql/admin/generated/theme_update.js'
 import {ThemeDelete} from '../../../cli/api/graphql/admin/generated/theme_delete.js'
+import {ThemeDuplicate} from '../../../cli/api/graphql/admin/generated/theme_duplicate.js'
 import {ThemePublish} from '../../../cli/api/graphql/admin/generated/theme_publish.js'
+import {ThemeCreate} from '../../../cli/api/graphql/admin/generated/theme_create.js'
 import {GetThemeFileBodies} from '../../../cli/api/graphql/admin/generated/get_theme_file_bodies.js'
 import {GetThemeFileChecksums} from '../../../cli/api/graphql/admin/generated/get_theme_file_checksums.js'
 import {
   ThemeFilesUpsert,
   ThemeFilesUpsertMutation,
 } from '../../../cli/api/graphql/admin/generated/theme_files_upsert.js'
+import {ThemeFilesDelete} from '../../../cli/api/graphql/admin/generated/theme_files_delete.js'
 import {
   OnlineStoreThemeFileBodyInputType,
   OnlineStoreThemeFilesUpsertFileInput,
+  MetafieldOwnerType,
+  ThemeRole,
 } from '../../../cli/api/graphql/admin/generated/types.js'
-import {restRequest, RestResponse, adminRequestDoc} from '@shopify/cli-kit/node/api/admin'
-import {AdminSession} from '@shopify/cli-kit/node/session'
-import {AbortError} from '@shopify/cli-kit/node/error'
-import {buildTheme} from '@shopify/cli-kit/node/themes/factories'
-import {Result, Checksum, Key, Theme, ThemeAsset, Operation} from '@shopify/cli-kit/node/themes/types'
-import {outputDebug} from '@shopify/cli-kit/node/output'
-import {sleep} from '@shopify/cli-kit/node/system'
+import {MetafieldDefinitionsByOwnerType} from '../../../cli/api/graphql/admin/generated/metafield_definitions_by_owner_type.js'
+import {GetThemes} from '../../../cli/api/graphql/admin/generated/get_themes.js'
+import {GetTheme} from '../../../cli/api/graphql/admin/generated/get_theme.js'
+import {OnlineStorePasswordProtection} from '../../../cli/api/graphql/admin/generated/online_store_password_protection.js'
+import {RequestModeInput} from '../http.js'
+import {adminRequestDoc} from '../api/admin.js'
+import {AdminSession} from '../session.js'
+import {AbortError} from '../error.js'
+import {outputDebug} from '../output.js'
 
 export type ThemeParams = Partial<Pick<Theme, 'name' | 'role' | 'processing' | 'src'>>
 export type AssetParams = Pick<ThemeAsset, 'key'> & Partial<Pick<ThemeAsset, 'value' | 'attachment'>>
+const SkeletonThemeCdn = 'https://cdn.shopify.com/static/online-store/theme-skeleton.zip'
+const THEME_API_NETWORK_BEHAVIOUR: RequestModeInput = {
+  useNetworkLevelRetry: true,
+  useAbortSignal: false,
+  maxRetryTimeMs: 90 * 1000,
+}
 
 export async function fetchTheme(id: number, session: AdminSession): Promise<Theme | undefined> {
-  const response = await request('GET', `/themes/${id}`, session, undefined, {fields: 'id,name,role,processing'})
-  return buildTheme(response.json.theme)
+  const gid = composeThemeGid(id)
+
+  try {
+    const {theme} = await adminRequestDoc({
+      query: GetTheme,
+      session,
+      variables: {id: gid},
+      responseOptions: {handleErrors: false},
+      preferredBehaviour: THEME_API_NETWORK_BEHAVIOUR,
+    })
+
+    if (theme) {
+      return buildTheme({
+        id: parseGid(theme.id),
+        processing: theme.processing,
+        role: theme.role.toLowerCase(),
+        name: theme.name,
+      })
+    }
+
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch (_error) {
+    /**
+     * Consumers of this and other theme APIs in this file expect either a theme
+     * or `undefined`.
+     *
+     * Error handlers should not inspect GraphQL error messages directly, as
+     * they are internationalized.
+     */
+    outputDebug(`Error fetching theme with ID: ${id}`)
+  }
 }
 
 export async function fetchThemes(session: AdminSession): Promise<Theme[]> {
-  const response = await request('GET', '/themes', session, undefined, {fields: 'id,name,role,processing'})
-  const themes = response.json?.themes
-  if (themes?.length > 0) return themes.map(buildTheme)
-  return []
+  const themes: Theme[] = []
+  let after: string | null = null
+
+  while (true) {
+    // eslint-disable-next-line no-await-in-loop
+    const response = await adminRequestDoc({
+      query: GetThemes,
+      session,
+      variables: {after},
+      responseOptions: {handleErrors: false},
+      preferredBehaviour: THEME_API_NETWORK_BEHAVIOUR,
+    })
+    if (!response.themes) {
+      unexpectedGraphQLError('Failed to fetch themes')
+    }
+    const {nodes, pageInfo} = response.themes
+    nodes.forEach((theme) => {
+      const t = buildTheme({
+        id: parseGid(theme.id),
+        processing: theme.processing,
+        role: theme.role.toLowerCase(),
+        name: theme.name,
+      })
+      if (t) {
+        themes.push(t)
+      }
+    })
+    if (!pageInfo.hasNextPage) {
+      return themes
+    }
+
+    after = pageInfo.endCursor as string
+  }
 }
 
-export async function createTheme(params: ThemeParams, session: AdminSession): Promise<Theme | undefined> {
-  const response = await request('POST', '/themes', session, {theme: {...params}})
+export async function themeCreate(params: ThemeParams, session: AdminSession): Promise<Theme | undefined> {
+  const themeSource = params.src ?? SkeletonThemeCdn
+  const {themeCreate} = await adminRequestDoc({
+    query: ThemeCreate,
+    session,
+    variables: {
+      name: params.name ?? '',
+      source: themeSource,
+      role: (params.role ?? DEVELOPMENT_THEME_ROLE).toUpperCase() as ThemeRole,
+    },
+    responseOptions: {handleErrors: false},
+    preferredBehaviour: THEME_API_NETWORK_BEHAVIOUR,
+  })
 
-  if (!params.src) {
-    const minimumThemeAssets = [
-      {key: 'config/settings_schema.json', value: '[]'},
-      {key: 'layout/password.liquid', value: '{{ content_for_header }}{{ content_for_layout }}'},
-      {key: 'layout/theme.liquid', value: '{{ content_for_header }}{{ content_for_layout }}'},
-    ]
-
-    await bulkUploadThemeAssets(response.json.theme.id, minimumThemeAssets, session)
+  if (!themeCreate) {
+    unexpectedGraphQLError('Failed to create theme')
   }
 
-  return buildTheme({...response.json.theme, createdAtRuntime: true})
+  const {theme, userErrors} = themeCreate
+  if (userErrors.length) {
+    const userErrors = themeCreate.userErrors.map((error) => error.message).join(', ')
+    throw new AbortError(userErrors)
+  }
+
+  if (!theme) {
+    unexpectedGraphQLError('Failed to create theme')
+  }
+
+  return buildTheme({
+    id: parseGid(theme.id),
+    name: theme.name,
+    role: theme.role.toLowerCase(),
+  })
 }
 
 export async function fetchThemeAssets(id: number, filenames: Key[], session: AdminSession): Promise<ThemeAsset[]> {
@@ -59,10 +149,12 @@ export async function fetchThemeAssets(id: number, filenames: Key[], session: Ad
 
   while (true) {
     // eslint-disable-next-line no-await-in-loop
-    const response = await adminRequestDoc(GetThemeFileBodies, session, {
-      id: themeGid(id),
-      filenames,
-      after,
+    const response = await adminRequestDoc({
+      query: GetThemeFileBodies,
+      session,
+      variables: {id: themeGid(id), filenames, after},
+      responseOptions: {handleErrors: false},
+      preferredBehaviour: THEME_API_NETWORK_BEHAVIOUR,
     })
 
     if (!response.theme?.files?.nodes || !response.theme?.files?.pageInfo) {
@@ -76,11 +168,12 @@ export async function fetchThemeAssets(id: number, filenames: Key[], session: Ad
       // eslint-disable-next-line no-await-in-loop
       ...(await Promise.all(
         nodes.map(async (file) => {
-          const content = await parseThemeFileContent(file.body)
+          const {attachment, value} = await parseThemeFileContent(file.body)
           return {
+            attachment,
             key: file.filename,
             checksum: file.checksumMd5 as string,
-            value: content,
+            value,
           }
         }),
       )),
@@ -94,11 +187,52 @@ export async function fetchThemeAssets(id: number, filenames: Key[], session: Ad
   }
 }
 
-export async function deleteThemeAsset(id: number, key: Key, session: AdminSession): Promise<boolean> {
-  const response = await request('DELETE', `/themes/${id}/assets`, session, undefined, {
-    'asset[key]': key,
-  })
-  return response.status === 200
+export async function deleteThemeAssets(id: number, filenames: Key[], session: AdminSession): Promise<Result[]> {
+  const batchSize = 50
+  const results: Result[] = []
+
+  for (let i = 0; i < filenames.length; i += batchSize) {
+    const batch = filenames.slice(i, i + batchSize)
+    // eslint-disable-next-line no-await-in-loop
+    const {themeFilesDelete} = await adminRequestDoc({
+      query: ThemeFilesDelete,
+      session,
+      variables: {
+        themeId: composeThemeGid(id),
+        files: batch,
+      },
+      preferredBehaviour: THEME_API_NETWORK_BEHAVIOUR,
+    })
+
+    if (!themeFilesDelete) {
+      unexpectedGraphQLError('Failed to delete theme assets')
+    }
+
+    const {deletedThemeFiles, userErrors} = themeFilesDelete
+
+    if (deletedThemeFiles) {
+      deletedThemeFiles.forEach((file) => {
+        results.push({key: file.filename, success: true, operation: Operation.Delete})
+      })
+    }
+
+    if (userErrors.length > 0) {
+      userErrors.forEach((error) => {
+        if (error.filename) {
+          results.push({
+            key: error.filename,
+            success: false,
+            operation: Operation.Delete,
+            errors: {asset: [error.message]},
+          })
+        } else {
+          unexpectedGraphQLError(`Failed to delete theme assets: ${error.message}`)
+        }
+      })
+    }
+  }
+
+  return results
 }
 
 export async function bulkUploadThemeAssets(
@@ -144,7 +278,12 @@ async function uploadFiles(
   files: {filename: string; body: {type: OnlineStoreThemeFileBodyInputType; value: string}}[],
   session: AdminSession,
 ): Promise<ThemeFilesUpsertMutation> {
-  return adminRequestDoc(ThemeFilesUpsert, session, {themeId: themeGid(themeId), files})
+  return adminRequestDoc({
+    query: ThemeFilesUpsert,
+    session,
+    variables: {themeId: themeGid(themeId), files},
+    preferredBehaviour: THEME_API_NETWORK_BEHAVIOUR,
+  })
 }
 
 function processUploadResults(uploadResults: ThemeFilesUpsertMutation): Result[] {
@@ -187,7 +326,13 @@ export async function fetchChecksums(id: number, session: AdminSession): Promise
 
   while (true) {
     // eslint-disable-next-line no-await-in-loop
-    const response = await adminRequestDoc(GetThemeFileChecksums, session, {id: themeGid(id), after})
+    const response = await adminRequestDoc({
+      query: GetThemeFileChecksums,
+      session,
+      variables: {id: themeGid(id), after},
+      responseOptions: {handleErrors: false},
+      preferredBehaviour: THEME_API_NETWORK_BEHAVIOUR,
+    })
 
     if (!response?.theme?.files?.nodes || !response?.theme?.files?.pageInfo) {
       const userErrors = response.theme?.files?.userErrors.map((error) => error.filename).join(', ')
@@ -218,7 +363,12 @@ export async function themeUpdate(id: number, params: ThemeParams, session: Admi
     input.name = name
   }
 
-  const {themeUpdate} = await adminRequestDoc(ThemeUpdate, session, {id: composeThemeGid(id), input})
+  const {themeUpdate} = await adminRequestDoc({
+    query: ThemeUpdate,
+    session,
+    variables: {id: composeThemeGid(id), input},
+    preferredBehaviour: THEME_API_NETWORK_BEHAVIOUR,
+  })
   if (!themeUpdate) {
     // An unexpected error occurred during the GraphQL request execution
     unexpectedGraphQLError('Failed to update theme')
@@ -243,7 +393,12 @@ export async function themeUpdate(id: number, params: ThemeParams, session: Admi
 }
 
 export async function themePublish(id: number, session: AdminSession): Promise<Theme | undefined> {
-  const {themePublish} = await adminRequestDoc(ThemePublish, session, {id: composeThemeGid(id)})
+  const {themePublish} = await adminRequestDoc({
+    query: ThemePublish,
+    session,
+    variables: {id: composeThemeGid(id)},
+    preferredBehaviour: THEME_API_NETWORK_BEHAVIOUR,
+  })
   if (!themePublish) {
     // An unexpected error occurred during the GraphQL request execution
     unexpectedGraphQLError('Failed to update theme')
@@ -268,7 +423,12 @@ export async function themePublish(id: number, session: AdminSession): Promise<T
 }
 
 export async function themeDelete(id: number, session: AdminSession): Promise<boolean | undefined> {
-  const {themeDelete} = await adminRequestDoc(ThemeDelete, session, {id: composeThemeGid(id)})
+  const {themeDelete} = await adminRequestDoc({
+    query: ThemeDelete,
+    session,
+    variables: {id: composeThemeGid(id)},
+    preferredBehaviour: THEME_API_NETWORK_BEHAVIOUR,
+  })
   if (!themeDelete) {
     // An unexpected error occurred during the GraphQL request execution
     unexpectedGraphQLError('Failed to update theme')
@@ -288,133 +448,108 @@ export async function themeDelete(id: number, session: AdminSession): Promise<bo
   return true
 }
 
-async function request<T>(
-  method: string,
-  path: string,
+export interface ThemeDuplicateResult {
+  theme?: Theme
+  userErrors: {field?: string[] | null; message: string}[]
+  requestId?: string
+}
+
+export async function themeDuplicate(
+  id: number,
+  name: string | undefined,
   session: AdminSession,
-  params?: T,
-  searchParams: {[name: string]: string} = {},
-  retries = 1,
-): Promise<RestResponse> {
-  const response = await throttler.throttle(() => restRequest(method, path, session, params, searchParams))
+): Promise<ThemeDuplicateResult> {
+  let requestId: string | undefined
 
-  const status = response.status
+  const {themeDuplicate} = await adminRequestDoc({
+    query: ThemeDuplicate,
+    session,
+    variables: {id: composeThemeGid(id), name},
+    preferredBehaviour: THEME_API_NETWORK_BEHAVIOUR,
+    version: '2025-10',
+    responseOptions: {
+      onResponse: (response) => {
+        requestId = response.headers.get('x-request-id') ?? undefined
+      },
+    },
+  })
 
-  throttler.updateApiCallLimitFromResponse(response)
+  if (!themeDuplicate) {
+    // An unexpected error occurred during the GraphQL request execution
+    return {
+      theme: undefined,
+      userErrors: [{message: 'Failed to duplicate theme'}],
+      requestId,
+    }
+  }
 
-  switch (true) {
-    case status >= 200 && status <= 399:
-      // Returns the successful reponse
-      return response
-    case status === 404:
-      // Defer the decision when a resource is not found
-      return response
-    case status === 429:
-      // Retry following the "retry-after" header
-      return throttler.delayAwareRetry(response, () => request(method, path, session, params, searchParams))
-    case status === 403:
-      return handleForbiddenError(response, session)
-    case status === 401:
-      /**
-       * We need to resolve the call to the refresh function at runtime to
-       * avoid a circular reference.
-       *
-       * This won't be necessary when https://github.com/Shopify/cli/issues/4769
-       * gets resolved, and this condition must be removed then.
-       */
-      if ('refresh' in session) {
-        const refresh = session.refresh as () => Promise<void>
-        await refresh()
-      }
+  const {newTheme, userErrors} = themeDuplicate
 
-      // Retry 401 errors to be resilient to authentication errors.
-      return handleRetriableError({
-        path,
-        retries,
-        retry: () => {
-          return request(method, path, session, params, searchParams, retries + 1)
-        },
-        fail: () => {
-          throw new AbortError(`[${status}] API request unauthorized error`)
-        },
-      })
-    case status === 422:
-      throw new AbortError(`[${status}] API request unprocessable content: ${errors(response)}`)
-    case status >= 400 && status <= 499:
-      throw new AbortError(`[${status}] API request client error`)
-    case status >= 500 && status <= 599:
-      // Retry 500-family of errors as that may solve the issue (especially in 503 errors)
-      return handleRetriableError({
-        path,
-        retries,
-        retry: () => {
-          return request(method, path, session, params, searchParams, retries + 1)
-        },
-        fail: () => {
-          throw new AbortError(`[${status}] API request server error`)
-        },
-      })
-    default:
-      throw new AbortError(`[${status}] API request unexpected error`)
+  if (userErrors.length > 0) {
+    return {
+      theme: undefined,
+      userErrors,
+      requestId,
+    }
+  }
+
+  if (!newTheme) {
+    // An unexpected error if neither theme nor userErrors are returned
+    return {
+      theme: undefined,
+      userErrors: [{message: 'Failed to duplicate theme'}],
+      requestId,
+    }
+  }
+
+  const theme = buildTheme({
+    id: parseGid(newTheme.id),
+    name: newTheme.name,
+    role: newTheme.role.toLowerCase(),
+  })
+
+  return {
+    theme,
+    userErrors: [],
+    requestId,
   }
 }
 
-function handleForbiddenError(response: RestResponse, session: AdminSession): never {
-  const store = session.storeFqdn
-  const adminUrl = storeAdminUrl(session)
-  const error = errorMessage(response)
+export async function metafieldDefinitionsByOwnerType(type: MetafieldOwnerType, session: AdminSession) {
+  const {metafieldDefinitions} = await adminRequestDoc({
+    query: MetafieldDefinitionsByOwnerType,
+    session,
+    variables: {ownerType: type},
+  })
 
-  if (error.match(/Cannot delete generated asset/) !== null) {
-    throw new AbortError(error)
-  }
-
-  throw new AbortError(
-    `You are not authorized to edit themes on "${store}".`,
-    "You can't use Shopify CLI with development stores if you only have Partner staff " +
-      'member access. If you want to use Shopify CLI to work on a development store, then ' +
-      'you should be the store owner or create a staff account on the store.' +
-      '\n\n' +
-      "If you're the store owner, then you need to log in to the store directly using the " +
-      `store URL at least once (for example, using "${adminUrl}") before you log in using ` +
-      'Shopify CLI. Logging in to the Shopify admin directly connects the development ' +
-      'store with your Shopify login.',
-  )
+  return metafieldDefinitions.nodes.map((definition) => ({
+    key: definition.key,
+    namespace: definition.namespace,
+    name: definition.name,
+    description: definition.description,
+    type: {
+      name: definition.type.name,
+      category: definition.type.category,
+    },
+  }))
 }
 
-function errors(response: RestResponse) {
-  return JSON.stringify(response.json?.errors)
-}
-
-function errorMessage(response: RestResponse): string {
-  const message = response.json?.message
-
-  if (typeof message === 'string') {
-    return message
+export async function passwordProtected(session: AdminSession): Promise<boolean> {
+  const {onlineStore} = await adminRequestDoc({
+    query: OnlineStorePasswordProtection,
+    session,
+  })
+  if (!onlineStore) {
+    unexpectedGraphQLError("Unable to get details about the storefront's password protection")
   }
 
-  return ''
+  const {passwordProtection} = onlineStore
+
+  return passwordProtection.enabled
 }
 
 function unexpectedGraphQLError(message: string): never {
   throw new AbortError(message)
-}
-
-interface RetriableErrorOptions {
-  path: string
-  retries: number
-  retry: () => Promise<RestResponse>
-  fail: () => never
-}
-
-async function handleRetriableError({path, retries, retry, fail}: RetriableErrorOptions): Promise<RestResponse> {
-  if (retries >= 3) {
-    fail()
-  }
-
-  outputDebug(`[${retries}] Retrying '${path}' request...`)
-
-  await sleep(0.2)
-  return retry()
 }
 
 function themeGid(id: number): string {
@@ -426,16 +561,21 @@ type OnlineStoreThemeFileBody =
   | {__typename: 'OnlineStoreThemeFileBodyText'; content: string}
   | {__typename: 'OnlineStoreThemeFileBodyUrl'; url: string}
 
-async function parseThemeFileContent(body: OnlineStoreThemeFileBody): Promise<string> {
+export async function parseThemeFileContent(
+  body: OnlineStoreThemeFileBody,
+): Promise<{value?: string; attachment?: string}> {
   switch (body.__typename) {
     case 'OnlineStoreThemeFileBodyText':
-      return body.content
+      return {value: body.content}
     case 'OnlineStoreThemeFileBodyBase64':
-      return Buffer.from(body.contentBase64, 'base64').toString()
+      return {attachment: body.contentBase64}
     case 'OnlineStoreThemeFileBodyUrl':
       try {
+        // eslint-disable-next-line no-restricted-globals
         const response = await fetch(body.url)
-        return await response.text()
+
+        const arrayBuffer = await response.arrayBuffer()
+        return {attachment: Buffer.from(arrayBuffer).toString('base64')}
       } catch (error) {
         // Raise error if we can't download the file
         throw new AbortError(`Error downloading content from URL: ${body.url}`)

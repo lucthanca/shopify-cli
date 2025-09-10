@@ -34,8 +34,13 @@ export async function storeContext({
   const {app, organization, developerPlatformClient} = appContextResult
   let selectedStore: OrganizationStore
 
+  const devStoreUrlFromAppConfig = app.configuration.build?.dev_store_url
+  const devStoreUrlFromHiddenConfig = app.hiddenConfig.dev_store_url
+
+  const cachedStoreURL = devStoreUrlFromAppConfig ?? devStoreUrlFromHiddenConfig
+
   // If forceReselectStore is true, ignore the cached storeFqdn in the app configuration.
-  const cachedStoreInToml = forceReselectStore ? undefined : app.configuration.build?.dev_store_url
+  const cachedStoreInToml = forceReselectStore ? undefined : cachedStoreURL
 
   // An explicit storeFqdn has preference over anything else.
   const storeFqdnToUse = storeFqdn ?? cachedStoreInToml
@@ -52,6 +57,14 @@ export async function storeContext({
 
   await logMetadata(selectedStore, forceReselectStore)
   selectedStore.shopDomain = await normalizeStoreFqdn(selectedStore.shopDomain)
+
+  // Save the selected store in the hidden config file
+  if (selectedStore.shopDomain !== cachedStoreURL || !devStoreUrlFromHiddenConfig) {
+    await app.updateHiddenConfig({dev_store_url: selectedStore.shopDomain})
+  }
+
+  // Ensure that the user is able to login to the store and install apps
+  await developerPlatformClient.ensureUserAccessToStore(organization.id, selectedStore)
 
   return selectedStore
 }

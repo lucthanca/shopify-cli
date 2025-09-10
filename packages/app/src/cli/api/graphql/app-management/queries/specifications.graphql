@@ -1,11 +1,12 @@
-query fetchSpecifications {
-  specifications {
+query fetchSpecifications($organizationId: ID!) {
+  specifications(organizationId: $organizationId) {
     name
     identifier
     externalIdentifier
     features
     uidStrategy {
       appModuleLimit
+      isClientProvided
     }
     validationSchema {
       jsonSchema

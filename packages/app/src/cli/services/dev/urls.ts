@@ -1,18 +1,14 @@
 import {updateURLsPrompt} from '../../prompts/dev.js'
-import {
-  AppConfigurationInterface,
-  AppInterface,
-  CurrentAppConfiguration,
-  isCurrentAppSchema,
-} from '../../models/app/app.js'
+import {AppConfigurationInterface, AppLinkedInterface, CurrentAppConfiguration} from '../../models/app/app.js'
 import {UpdateURLsSchema, UpdateURLsVariables} from '../../api/graphql/update_urls.js'
 import {setCachedAppInfo} from '../local-storage.js'
 import {AppConfigurationUsedByCli} from '../../models/extensions/specifications/types/app_config.js'
+import {prependApplicationUrl} from '../../models/extensions/specifications/validation/url_prepender.js'
 import {DeveloperPlatformClient} from '../../utilities/developer-platform-client.js'
-import {patchAppConfigurationFile} from '../app/patch-app-configuration-file.js'
+import {setManyAppConfigValues} from '../app/patch-app-configuration-file.js'
 import {AbortError, BugError} from '@shopify/cli-kit/node/error'
 import {Config} from '@oclif/core'
-import {checkPortAvailability, getAvailableTCPPort} from '@shopify/cli-kit/node/tcp'
+import {checkPortAvailability} from '@shopify/cli-kit/node/tcp'
 import {isValidURL} from '@shopify/cli-kit/common/url'
 import {appHost, appPort, fetchSpinPort, isSpin, spinFqdn, spinVariables} from '@shopify/cli-kit/node/context/spin'
 import {codespaceURL, codespacePortForwardingDomain, gitpodURL} from '@shopify/cli-kit/node/context/local'
@@ -20,7 +16,6 @@ import {fanoutHooks} from '@shopify/cli-kit/node/plugins'
 import {terminalSupportsPrompting} from '@shopify/cli-kit/node/system'
 import {TunnelClient} from '@shopify/cli-kit/node/plugins/tunnel'
 import {outputDebug} from '@shopify/cli-kit/node/output'
-import {ensureXpifyRedirectUrlWhitelist} from '@xpify/buildpack'
 
 interface AppProxy {
   proxyUrl: string
@@ -28,14 +23,21 @@ interface AppProxy {
   proxySubPathPrefix: string
 }
 
-export interface PartnersURLs {
+export interface ApplicationURLs {
   applicationUrl: string
   redirectUrlWhitelist: string[]
   appProxy?: AppProxy
 }
 
-export interface FrontendURLOptions {
-  noTunnel: boolean
+export type FrontendURLOptions = UseLocalhostFrontendUrlOptions | UseTunnelFrontendUrlOptions
+
+interface UseLocalhostFrontendUrlOptions {
+  noTunnelUseLocalhost: true
+  port: number
+}
+
+interface UseTunnelFrontendUrlOptions {
+  noTunnelUseLocalhost: false
   tunnelUrl?: string
   tunnelClient: TunnelClient | undefined
 }
@@ -48,7 +50,7 @@ interface FrontendURLResult {
 
 /**
  * The tunnel creation logic depends on 7 variables:
- * - If a Codespaces environment is deteced, then the URL is built using the codespaces hostname. No need for tunnel
+ * - If a Codespaces environment is detected, then the URL is built using the codespaces hostname. No need for tunnel
  * - If a Gitpod environment is detected, then the URL is built using the gitpod hostname. No need for tunnel
  * - If a Spin environment is detected, then the URL is built using the cli + fqdn hostname as configured in nginx.
  *   No need for tunnel. In case problems with that configuration, the flags Tunnel or Custom Tunnel url could be used
@@ -59,9 +61,17 @@ interface FrontendURLResult {
  * If there is no cached tunnel plugin and a tunnel is necessary, we'll ask the user to confirm.
  */
 export async function generateFrontendURL(options: FrontendURLOptions): Promise<FrontendURLResult> {
+  if (options.noTunnelUseLocalhost) {
+    return {
+      frontendUrl: 'https://localhost',
+      frontendPort: options.port,
+      usingLocalhost: true,
+    }
+  }
+
   let frontendPort = 4040
   let frontendUrl = ''
-  let usingLocalhost = false
+  const usingLocalhost = options.noTunnelUseLocalhost
 
   if (codespaceURL()) {
     frontendUrl = `https://${codespaceURL()}-${frontendPort}.${codespacePortForwardingDomain()}`
@@ -104,14 +114,9 @@ export async function generateFrontendURL(options: FrontendURLOptions): Promise<
     return {frontendUrl, frontendPort, usingLocalhost}
   }
 
-  if (options.noTunnel) {
-    frontendPort = await getAvailableTCPPort()
-    frontendUrl = 'http://localhost'
-    usingLocalhost = true
-  } else if (options.tunnelClient) {
-    const url = await pollTunnelURL(options.tunnelClient)
+  if (options.tunnelClient) {
     frontendPort = options.tunnelClient.port
-    frontendUrl = url
+    frontendUrl = await pollTunnelURL(options.tunnelClient)
   }
 
   return {frontendUrl, frontendPort, usingLocalhost}
@@ -144,11 +149,11 @@ async function pollTunnelURL(tunnelClient: TunnelClient): Promise<string> {
   })
 }
 
-export function generatePartnersURLs(
+export function generateApplicationURLs(
   baseURL: string,
   authCallbackPath?: string | string[],
   proxyFields?: CurrentAppConfiguration['app_proxy'],
-): PartnersURLs {
+): ApplicationURLs {
   let redirectUrlWhitelist: string[]
   if (authCallbackPath && authCallbackPath.length > 0) {
     const authCallbackPaths = Array.isArray(authCallbackPath) ? authCallbackPath : [authCallbackPath]
@@ -169,13 +174,13 @@ export function generatePartnersURLs(
   const appProxy = proxyFields
     ? {
         appProxy: {
-          proxyUrl: replaceHost(proxyFields.url, baseURL),
+          proxyUrl: replaceHost(prependApplicationUrl(proxyFields.url, baseURL), baseURL),
           proxySubPath: proxyFields.subpath,
           proxySubPathPrefix: proxyFields.prefix,
         },
       }
     : {}
-  redirectUrlWhitelist = ensureXpifyRedirectUrlWhitelist(redirectUrlWhitelist)
+
   return {
     applicationUrl: baseURL,
     redirectUrlWhitelist,
@@ -191,7 +196,7 @@ function replaceHost(oldUrl: string, newUrl: string): string {
 }
 
 export async function updateURLs(
-  urls: PartnersURLs,
+  urls: ApplicationURLs,
   apiKey: string,
   developerPlatformClient: DeveloperPlatformClient,
   localApp?: AppConfigurationInterface,
@@ -203,29 +208,26 @@ export async function updateURLs(
     throw new AbortError(errors)
   }
 
-  if (localApp && isCurrentAppSchema(localApp.configuration) && localApp.configuration.client_id === apiKey) {
-    const patch = {
-      application_url: urls.applicationUrl,
-      auth: {
-        redirect_urls: urls.redirectUrlWhitelist,
-      },
-      ...(urls.appProxy
-        ? {
-            app_proxy: {
-              url: urls.appProxy.proxyUrl,
-              subpath: urls.appProxy.proxySubPath,
-              prefix: urls.appProxy.proxySubPathPrefix,
-            },
-          }
-        : {}),
+  if (localApp && localApp.configuration.client_id === apiKey) {
+    const configValues = [
+      {keyPath: 'application_url', value: urls.applicationUrl},
+      {keyPath: 'auth.redirect_urls', value: urls.redirectUrlWhitelist},
+    ]
+
+    if (urls.appProxy) {
+      configValues.push(
+        {keyPath: 'app_proxy.url', value: urls.appProxy.proxyUrl},
+        {keyPath: 'app_proxy.subpath', value: urls.appProxy.proxySubPath},
+        {keyPath: 'app_proxy.prefix', value: urls.appProxy.proxySubPathPrefix},
+      )
     }
 
-    await patchAppConfigurationFile({path: localApp.configuration.path, patch, schema: localApp.configSchema})
+    await setManyAppConfigValues(localApp.configuration.path, configValues)
   }
 }
 
-export async function getURLs(remoteAppConfig?: AppConfigurationUsedByCli): Promise<PartnersURLs> {
-  const result: PartnersURLs = {
+export async function getURLs(remoteAppConfig?: AppConfigurationUsedByCli): Promise<ApplicationURLs> {
+  const result: ApplicationURLs = {
     applicationUrl: remoteAppConfig?.application_url ?? '',
     redirectUrlWhitelist: remoteAppConfig?.auth?.redirect_urls ?? [],
   }
@@ -240,34 +242,37 @@ export async function getURLs(remoteAppConfig?: AppConfigurationUsedByCli): Prom
 }
 
 interface ShouldOrPromptUpdateURLsOptions {
-  currentURLs: PartnersURLs
+  currentURLs: ApplicationURLs
   appDirectory: string
   cachedUpdateURLs?: boolean
   newApp?: boolean
-  localApp?: AppInterface
+  localApp?: AppLinkedInterface
   apiKey: string
+  newURLs: ApplicationURLs
+  developerPlatformClient: DeveloperPlatformClient
 }
 
 export async function shouldOrPromptUpdateURLs(options: ShouldOrPromptUpdateURLsOptions): Promise<boolean> {
   if (options.localApp && options.localApp.configuration.client_id !== options.apiKey) return true
-  if (options.newApp || !terminalSupportsPrompting()) return true
+  if (options.newApp ?? !terminalSupportsPrompting()) return true
   let shouldUpdateURLs: boolean = options.cachedUpdateURLs === true
 
   if (options.cachedUpdateURLs === undefined) {
     shouldUpdateURLs = await updateURLsPrompt(
+      options.developerPlatformClient.supportsDevSessions,
       options.currentURLs.applicationUrl,
       options.currentURLs.redirectUrlWhitelist,
+      options.newURLs,
     )
 
-    if (options.localApp && isCurrentAppSchema(options.localApp.configuration)) {
+    if (options.localApp) {
       const localConfiguration = options.localApp.configuration
       localConfiguration.build = {
         ...localConfiguration.build,
         automatically_update_urls_on_dev: shouldUpdateURLs,
       }
-      const patch = {build: {automatically_update_urls_on_dev: shouldUpdateURLs}}
       const path = options.localApp.configuration.path
-      await patchAppConfigurationFile({path, patch, schema: options.localApp.configSchema})
+      await setManyAppConfigValues(path, [{keyPath: 'build.automatically_update_urls_on_dev', value: shouldUpdateURLs}])
     } else {
       setCachedAppInfo({directory: options.appDirectory, updateURLs: shouldUpdateURLs})
     }
@@ -275,7 +280,7 @@ export async function shouldOrPromptUpdateURLs(options: ShouldOrPromptUpdateURLs
   return shouldUpdateURLs
 }
 
-export function validatePartnersURLs(urls: PartnersURLs): void {
+export function validateApplicationURLs(urls: ApplicationURLs): void {
   if (!isValidURL(urls.applicationUrl))
     throw new AbortError(`Invalid application URL: ${urls.applicationUrl}`, 'Valid format: "https://example.com"')
 

@@ -5,25 +5,32 @@ import {DraftableExtensionProcess, setupDraftableExtensionsProcess} from './draf
 import {SendWebhookProcess, setupSendUninstallWebhookProcess} from './uninstall-webhook.js'
 import {GraphiQLServerProcess, setupGraphiQLServerProcess} from './graphiql.js'
 import {WebProcess, setupWebProcesses} from './web.js'
-import {DevSessionProcess, setupDevSessionProcess} from './dev-session.js'
+import {DevSessionProcess, setupDevSessionProcess} from './dev-session/dev-session-process.js'
 import {AppLogsSubscribeProcess, setupAppLogsPollingProcess} from './app-logs-polling.js'
 import {AppWatcherProcess, setupAppWatcherProcess} from './app-watcher-process.js'
+import {DevSessionStatusManager} from './dev-session/dev-session-status-manager.js'
 import {environmentVariableNames} from '../../../constants.js'
 import {AppLinkedInterface, getAppScopes, WebType} from '../../../models/app/app.js'
 
 import {OrganizationApp} from '../../../models/organization.js'
 import {DevOptions} from '../../dev.js'
-import {getProxyingWebServer} from '../../../utilities/app/http-reverse-proxy.js'
+import {LocalhostCert, getProxyingWebServer} from '../../../utilities/app/http-reverse-proxy.js'
 import {buildAppURLForWeb} from '../../../utilities/app/app-url.js'
-import {PartnersURLs} from '../urls.js'
+import {ApplicationURLs} from '../urls.js'
 import {DeveloperPlatformClient} from '../../../utilities/developer-platform-client.js'
 import {AppEventWatcher} from '../app-events/app-event-watcher.js'
 import {reloadApp} from '../../../models/app/loader.js'
 import {getAvailableTCPPort} from '@shopify/cli-kit/node/tcp'
 import {isTruthy} from '@shopify/cli-kit/node/context/utilities'
 import {getEnvironmentVariables} from '@shopify/cli-kit/node/environment'
+import {outputInfo} from '@shopify/cli-kit/node/output'
 
-interface ProxyServerProcess extends BaseProcess<{port: number; rules: {[key: string]: string}}> {
+interface ProxyServerProcess
+  extends BaseProcess<{
+    port: number
+    rules: {[key: string]: string}
+    localhostCert?: LocalhostCert
+  }> {
   type: 'proxy-server'
 }
 
@@ -46,7 +53,8 @@ interface DevNetworkOptions {
   proxyUrl: string
   frontendPort: number
   backendPort: number
-  currentUrls: PartnersURLs
+  currentUrls: ApplicationURLs
+  reverseProxyCert?: LocalhostCert
 }
 
 export interface DevConfig {
@@ -78,17 +86,28 @@ export async function setupDevProcesses({
   processes: DevProcesses
   previewUrl: string
   graphiqlUrl: string | undefined
+  devSessionStatusManager: DevSessionStatusManager
 }> {
   const apiKey = remoteApp.apiKey
   const apiSecret = remoteApp.apiSecretKeys[0]?.secret ?? ''
   const appPreviewUrl = await buildAppURLForWeb(storeFqdn, apiKey)
   const env = getEnvironmentVariables()
   const shouldRenderGraphiQL = !isTruthy(env[environmentVariableNames.disableGraphiQLExplorer])
-  const shouldPerformAppLogPolling = localApp.allExtensions.some((extension) => extension.isFunctionExtension)
 
   // At this point, the toml file has changed, we need to reload the app before actually starting dev
   const reloadedApp = await reloadApp(localApp)
   const appWatcher = new AppEventWatcher(reloadedApp, network.proxyUrl)
+
+  // Decide on the appropriate preview URL for a session with these processes
+  const anyPreviewableExtensions = reloadedApp.allExtensions.some((ext) => ext.isPreviewable)
+  const devConsoleURL = `${network.proxyUrl}/extensions/dev-console`
+  const previewURL = anyPreviewableExtensions ? devConsoleURL : appPreviewUrl
+
+  const graphiqlURL = shouldRenderGraphiQL
+    ? `http://localhost:${graphiqlPort}/graphiql${graphiqlKey ? `?key=${graphiqlKey}` : ''}`
+    : undefined
+
+  const devSessionStatusManager = new DevSessionStatusManager({isReady: false, previewURL, graphiqlURL})
 
   const processes = [
     ...(await setupWebProcesses({
@@ -136,6 +155,9 @@ export async function setupDevProcesses({
           organizationId: remoteApp.organizationId,
           storeFqdn,
           appWatcher,
+          appPreviewURL: appPreviewUrl,
+          appLocalProxyURL: devConsoleURL,
+          devSessionStatusManager,
         })
       : await setupDraftableExtensionsProcess({
           localApp: reloadedApp,
@@ -162,34 +184,30 @@ export async function setupDevProcesses({
       apiSecret,
       remoteAppUpdated,
     }),
-    shouldPerformAppLogPolling
-      ? await setupAppLogsPollingProcess({
-          developerPlatformClient,
-          subscription: {
-            shopIds: [storeId],
-            apiKey,
-          },
-          storeName: storeFqdn,
-        })
-      : undefined,
+    await setupAppLogsPollingProcess({
+      developerPlatformClient,
+      subscription: {
+        shopIds: [Number(storeId)],
+        apiKey,
+      },
+      storeName: storeFqdn,
+      organizationId: remoteApp.organizationId,
+      localApp,
+      appWatcher,
+    }),
     await setupAppWatcherProcess({
       appWatcher,
     }),
   ].filter(stripUndefineds)
 
   // Add http server proxy & configure ports, for processes that need it
-  const processesWithProxy = await setPortsAndAddProxyProcess(processes, network.proxyPort)
-
-  // Decide on the appropriate preview URL for a session with these processes
-  const anyPreviewableExtensions = processesWithProxy.filter((process) => process.type === 'previewable-extension')
-  const previewUrl = anyPreviewableExtensions.length > 0 ? `${network.proxyUrl}/extensions/dev-console` : appPreviewUrl
+  const processesWithProxy = await setPortsAndAddProxyProcess(processes, network.proxyPort, network.reverseProxyCert)
 
   return {
     processes: processesWithProxy,
-    previewUrl,
-    graphiqlUrl: shouldRenderGraphiQL
-      ? `http://localhost:${graphiqlPort}/graphiql${graphiqlKey ? `?key=${graphiqlKey}` : ''}`
-      : undefined,
+    previewUrl: previewURL,
+    graphiqlUrl: graphiqlURL,
+    devSessionStatusManager,
   }
 }
 
@@ -197,14 +215,18 @@ const stripUndefineds = <T>(process: T | undefined | false): process is T => {
   return process !== undefined && process !== false
 }
 
-async function setPortsAndAddProxyProcess(processes: DevProcesses, proxyPort: number): Promise<DevProcesses> {
+async function setPortsAndAddProxyProcess(
+  processes: DevProcesses,
+  proxyPort: number,
+  reverseProxyCert?: LocalhostCert,
+): Promise<DevProcesses> {
   // Convert processes that use proxying to have a port number and register their mapping rules
   const processesAndRules = await Promise.all(
     processes.map(async (process) => {
       const rules: {[key: string]: string} = {}
 
       if (process.type === 'web' && process.options.roles.includes(WebType.Frontend)) {
-        const targetPort = process.options.portFromConfig || process.options.port
+        const targetPort = process.options.portFromConfig ?? process.options.port
         rules.default = `http://localhost:${targetPort}`
         const hmrServer = process.options.hmrServerOptions
         if (hmrServer) {
@@ -233,6 +255,7 @@ async function setPortsAndAddProxyProcess(processes: DevProcesses, proxyPort: nu
       options: {
         port: proxyPort,
         rules: allRules,
+        localhostCert: reverseProxyCert,
       },
     })
   }
@@ -240,10 +263,15 @@ async function setPortsAndAddProxyProcess(processes: DevProcesses, proxyPort: nu
   return newProcesses
 }
 
-export const startProxyServer: DevProcessFunction<{port: number; rules: {[key: string]: string}}> = async (
-  {abortSignal},
-  {port, rules},
-) => {
-  const {server} = await getProxyingWebServer(rules, abortSignal)
-  await server.listen(port)
+export const startProxyServer: DevProcessFunction<{
+  port: number
+  rules: {[key: string]: string}
+  localhostCert?: LocalhostCert
+}> = async ({abortSignal, stdout}, {port, rules, localhostCert}) => {
+  const {server} = await getProxyingWebServer(rules, abortSignal, localhostCert, stdout)
+  outputInfo(
+    `Proxy server started on port ${port} ${localhostCert ? `with certificate ${localhostCert.certPath}` : ''}`,
+    stdout,
+  )
+  await server.listen(port, 'localhost')
 }

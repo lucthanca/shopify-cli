@@ -4,8 +4,9 @@ import {ExtensionInstance} from './extension-instance.js'
 import {blocks} from '../../constants.js'
 
 import {Flag} from '../../utilities/developer-platform-client.js'
-import {AppConfigurationWithoutPath, CurrentAppConfiguration} from '../app/app.js'
+import {AppConfigurationWithoutPath} from '../app/app.js'
 import {loadLocalesConfig} from '../../utilities/extensions/locales-configuration.js'
+import {ApplicationURLs} from '../../services/dev/urls.js'
 import {Result} from '@shopify/cli-kit/node/result'
 import {capitalize} from '@shopify/cli-kit/common/string'
 import {ParseConfigurationResult, zod} from '@shopify/cli-kit/node/schema'
@@ -45,6 +46,7 @@ export interface Asset {
   outputFileName: string
   content: string
 }
+
 /**
  * Extension specification with all the needed properties and methods to load an extension.
  */
@@ -72,11 +74,8 @@ export interface ExtensionSpecification<TConfiguration extends BaseConfigType = 
   buildValidation?: (extension: ExtensionInstance<TConfiguration>) => Promise<void>
   hasExtensionPointTarget?(config: TConfiguration, target: string): boolean
   appModuleFeatures: (config?: TConfiguration) => ExtensionFeature[]
-  getDevSessionActionUpdateMessage?: (
-    config: TConfiguration,
-    appConfig: CurrentAppConfiguration,
-    storeFqdn: string,
-  ) => Promise<string>
+  getDevSessionUpdateMessages?: (config: TConfiguration) => Promise<string[]>
+  patchWithAppDevURLs?: (config: TConfiguration, urls: ApplicationURLs) => void
 
   /**
    * If required, convert configuration from the format used in the local filesystem to that expected by the platform.
@@ -111,6 +110,11 @@ export interface ExtensionSpecification<TConfiguration extends BaseConfigType = 
    * Parse some provided configuration into a valid configuration object for this extension.
    */
   parseConfigurationObject: (configurationObject: object) => ParseConfigurationResult<TConfiguration>
+
+  contributeToSharedTypeFile?: (
+    extension: ExtensionInstance<TConfiguration>,
+    typeDefinitionsByFile: Map<string, Set<string>>,
+  ) => Promise<void>
 }
 
 /**
@@ -182,7 +186,7 @@ export function createExtensionSpecification<TConfiguration extends BaseConfigTy
     reverseTransform: spec.transformRemoteToLocal,
     experience: spec.experience ?? 'extension',
     uidStrategy: spec.uidStrategy ?? (spec.experience === 'configuration' ? 'single' : 'uuid'),
-    getDevSessionActionUpdateMessage: spec.getDevSessionActionUpdateMessage,
+    getDevSessionUpdateMessages: spec.getDevSessionUpdateMessages,
   }
   const merged = {...defaults, ...spec}
 
@@ -223,70 +227,26 @@ export function createExtensionSpecification<TConfiguration extends BaseConfigTy
  */
 export function createConfigExtensionSpecification<TConfiguration extends BaseConfigType = BaseConfigType>(spec: {
   identifier: string
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  schema: zod.ZodObject<any>
+  schema: ZodSchemaType<TConfiguration>
   appModuleFeatures?: (config?: TConfiguration) => ExtensionFeature[]
-  transformConfig?: TransformationConfig | CustomTransformationConfig
+  transformConfig: TransformationConfig | CustomTransformationConfig
   uidStrategy?: UidStrategy
-  getDevSessionActionUpdateMessage?: (
-    config: TConfiguration,
-    appConfig: CurrentAppConfiguration,
-    storeFqdn: string,
-  ) => Promise<string>
+  getDevSessionUpdateMessages?: (config: TConfiguration) => Promise<string[]>
+  patchWithAppDevURLs?: (config: TConfiguration, urls: ApplicationURLs) => void
 }): ExtensionSpecification<TConfiguration> {
   const appModuleFeatures = spec.appModuleFeatures ?? (() => [])
   return createExtensionSpecification({
     identifier: spec.identifier,
     // This casting is required because `name` and `type` are mandatory for the existing extension spec configurations,
     // however, app config extensions config content is parsed from the `shopify.app.toml`
-    schema: spec.schema as unknown as ZodSchemaType<TConfiguration>,
+    schema: spec.schema,
     appModuleFeatures,
     transformLocalToRemote: resolveAppConfigTransform(spec.transformConfig),
     transformRemoteToLocal: resolveReverseAppConfigTransform(spec.schema, spec.transformConfig),
     experience: 'configuration',
     uidStrategy: spec.uidStrategy ?? 'single',
-    getDevSessionActionUpdateMessage: spec.getDevSessionActionUpdateMessage,
-  })
-}
-
-/**
- * Create a zod object schema based on keys, but neutral as to content.
- *
- * Used for schemas that are supplemented by JSON schema contracts, but need to register top-level keys.
- */
-function neutralTopLevelSchema<TKey extends string>(...keys: TKey[]): zod.ZodObject<{[k in TKey]: zod.ZodAny}> {
-  return zod.object(
-    Object.fromEntries(
-      keys.map((key) => {
-        return [key, zod.any()]
-      }),
-    ),
-  ) as zod.ZodObject<{[k in TKey]: zod.ZodAny}>
-}
-
-/**
- * Create a new app config extension spec that uses contract-based validation.
- *
- * See {@link createConfigExtensionSpecification} for more about app config extensions.
- */
-export function createContractBasedConfigModuleSpecification<TKey extends string>(
-  identifier: string,
-  ...topLevelKeys: TKey[]
-): ExtensionSpecification {
-  const schema = neutralTopLevelSchema(...topLevelKeys)
-  return createConfigExtensionSpecification({
-    identifier,
-    schema,
-    transformConfig: {
-      // outgoing config is already scoped to this module and passed directly along
-      forward(obj) {
-        return obj
-      },
-      // incoming config from the platform is included in app config as-is
-      reverse(obj) {
-        return obj
-      },
-    },
+    getDevSessionUpdateMessages: spec.getDevSessionUpdateMessages,
+    patchWithAppDevURLs: spec.patchWithAppDevURLs,
   })
 }
 
@@ -309,9 +269,7 @@ export function createContractBasedModuleSpecification<TConfiguration extends Ba
   })
 }
 
-function resolveAppConfigTransform(transformConfig?: TransformationConfig | CustomTransformationConfig) {
-  if (!transformConfig) return (content: object) => defaultAppConfigTransform(content as {[key: string]: unknown})
-
+function resolveAppConfigTransform(transformConfig: TransformationConfig | CustomTransformationConfig) {
   if (Object.keys(transformConfig).includes('forward')) {
     return (transformConfig as CustomTransformationConfig).forward!
   } else {
@@ -371,32 +329,6 @@ function appConfigTransform(
   }
 
   return transformedContent
-}
-
-/**
- * Flat the configuration object to a single level object. This is the schema expected by the server side.
- * ```json
- * {
- *   pos: {
- *    embedded = true
- *   }
- * }
- * ```
- * will be flattened to:
- * ```json
- * {
- *  embedded = true
- * }
- * ```
- * @param content - The objet to be flattened
- *
- * @returns A single level object
- */
-function defaultAppConfigTransform(content: {[key: string]: unknown}) {
-  return Object.keys(content).reduce((result, key) => {
-    const isObjectNotArray = content[key] !== null && typeof content[key] === 'object' && !Array.isArray(content[key])
-    return {...result, ...(isObjectNotArray ? {...(content[key] as object)} : {[key]: content[key]})}
-  }, {})
 }
 
 /**

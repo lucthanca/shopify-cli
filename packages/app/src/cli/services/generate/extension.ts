@@ -1,10 +1,11 @@
 import {configurationFileNames, versions} from '../../constants.js'
-import {AppInterface} from '../../models/app/app.js'
-import {buildGraphqlTypes} from '../function/build.js'
+import {AppLinkedInterface} from '../../models/app/app.js'
+import {buildGraphqlTypes, PREFERRED_FUNCTION_NPM_PACKAGE_MAJOR_VERSION} from '../function/build.js'
 import {GenerateExtensionContentOutput} from '../../prompts/generate/extension.js'
 import {ExtensionFlavor, ExtensionTemplate} from '../../models/app/template.js'
 import {ensureDownloadedExtensionFlavorExists, ensureExtensionDirectoryExists} from '../extensions/common.js'
 import {DeveloperPlatformClient} from '../../utilities/developer-platform-client.js'
+import {reloadApp} from '../../models/app/loader.js'
 import {
   addNPMDependenciesIfNeeded,
   addResolutionOrOverride,
@@ -18,10 +19,10 @@ import {downloadGitRepository} from '@shopify/cli-kit/node/git'
 import {fileExists, inTemporaryDirectory, mkdir, moveFile, removeFile, glob} from '@shopify/cli-kit/node/fs'
 import {joinPath, relativizePath} from '@shopify/cli-kit/node/path'
 import {slugify} from '@shopify/cli-kit/common/string'
-import {randomUUID} from '@shopify/cli-kit/node/crypto'
+import {nonRandomUUID} from '@shopify/cli-kit/node/crypto'
 
 export interface GenerateExtensionTemplateOptions {
-  app: AppInterface
+  app: AppLinkedInterface
   cloneUrl?: string
   extensionChoices: GenerateExtensionContentOutput
   extensionTemplate: ExtensionTemplate
@@ -33,6 +34,7 @@ export interface GenerateExtensionTemplateOptions {
 
 export type ExtensionFlavorValue =
   | 'vanilla-js'
+  | 'preact'
   | 'react'
   | 'typescript'
   | 'typescript-react'
@@ -45,6 +47,7 @@ export type TemplateLanguage = 'javascript' | 'rust' | 'wasm' | undefined
 function getTemplateLanguage(flavor: ExtensionFlavorValue | undefined): TemplateLanguage {
   switch (flavor) {
     case 'vanilla-js':
+    case 'preact':
     case 'react':
     case 'typescript':
     case 'typescript-react':
@@ -65,11 +68,10 @@ export interface GeneratedExtension {
 interface ExtensionInitOptions {
   directory: string
   url: string
-  app: AppInterface
+  app: AppLinkedInterface
   type: string
   name: string
   extensionFlavor: ExtensionFlavor | undefined
-  uid: string | undefined
   onGetTemplateRepository: (url: string, destination: string) => Promise<void>
 }
 
@@ -82,8 +84,8 @@ export async function generateExtensionTemplate(
     (flavor) => flavor.value === extensionFlavorValue,
   )
   const directory = await ensureExtensionDirectoryExists({app: options.app, name: extensionName})
-  const url = options.cloneUrl || options.extensionTemplate.url
-  const uid = options.developerPlatformClient.supportsAtomicDeployments ? randomUUID() : undefined
+  const url = options.cloneUrl ?? options.extensionTemplate.url
+
   const initOptions: ExtensionInitOptions = {
     directory,
     url,
@@ -91,7 +93,6 @@ export async function generateExtensionTemplate(
     type: options.extensionTemplate.type,
     name: extensionName,
     extensionFlavor,
-    uid,
     onGetTemplateRepository:
       options.onGetTemplateRepository ??
       (async (url, destination) => {
@@ -129,7 +130,6 @@ async function themeExtensionInit({
   type,
   name,
   extensionFlavor,
-  uid,
   onGetTemplateRepository,
 }: ExtensionInitOptions) {
   return inTemporaryDirectory(async (tmpDir) => {
@@ -139,7 +139,7 @@ async function themeExtensionInit({
       tmpDir,
       onGetTemplateRepository,
     )
-    await recursiveLiquidTemplateCopy(templateDirectory, directory, {name, type, uid})
+    await recursiveLiquidTemplateCopy(templateDirectory, directory, {name, type, uid: nonRandomUUID(slugify(name))})
   })
 }
 
@@ -149,7 +149,6 @@ async function functionExtensionInit({
   app,
   name,
   extensionFlavor,
-  uid,
   onGetTemplateRepository,
 }: ExtensionInitOptions) {
   const templateLanguage = getTemplateLanguage(extensionFlavor?.value)
@@ -169,12 +168,12 @@ async function functionExtensionInit({
           name,
           handle: slugify(name),
           flavor: extensionFlavor?.value,
-          uid,
+          uid: nonRandomUUID(slugify(name)),
         })
       })
 
       if (templateLanguage === 'javascript') {
-        const srcFileExtension = getSrcFileExtension(extensionFlavor?.value || 'rust')
+        const srcFileExtension = getSrcFileExtension(extensionFlavor?.value ?? 'rust')
         await changeIndexFileExtension(directory, srcFileExtension, '!(*.graphql)')
       }
     },
@@ -217,7 +216,6 @@ async function uiExtensionInit({
   app,
   name,
   extensionFlavor,
-  uid,
   onGetTemplateRepository,
 }: ExtensionInitOptions) {
   const templateLanguage = getTemplateLanguage(extensionFlavor?.value)
@@ -240,7 +238,7 @@ async function uiExtensionInit({
             name,
             handle: slugify(name),
             flavor: extensionFlavor?.value ?? '',
-            uid,
+            uid: nonRandomUUID(slugify(name)),
           })
         })
 
@@ -277,6 +275,14 @@ async function uiExtensionInit({
       },
     },
   ]
+
+  tasks.push({
+    title: 'Update shared type definition',
+    task: async () => {
+      await reloadApp(app)
+    },
+  })
+
   await renderTasks(tasks)
 }
 
@@ -284,6 +290,7 @@ type SrcFileExtension = 'ts' | 'tsx' | 'js' | 'jsx' | 'rs' | 'wasm' | 'liquid' |
 function getSrcFileExtension(extensionFlavor: ExtensionFlavorValue): SrcFileExtension {
   const flavorToSrcFileExtension: {[key in ExtensionFlavorValue]: SrcFileExtension} = {
     'vanilla-js': 'js',
+    preact: 'jsx',
     react: 'jsx',
     typescript: 'ts',
     'typescript-react': 'tsx',
@@ -299,7 +306,10 @@ function getSrcFileExtension(extensionFlavor: ExtensionFlavorValue): SrcFileExte
 export function getFunctionRuntimeDependencies(templateLanguage: string): DependencyVersion[] {
   const dependencies: DependencyVersion[] = []
   if (templateLanguage === 'javascript') {
-    dependencies.push({name: '@shopify/shopify_function', version: '1.0.0'})
+    dependencies.push({
+      name: '@shopify/shopify_function',
+      version: `~${PREFERRED_FUNCTION_NPM_PACKAGE_MAJOR_VERSION}.0.0`,
+    })
   }
   return dependencies
 }
@@ -316,6 +326,11 @@ async function changeIndexFileExtension(extensionDirectory: string, fileExtensio
 }
 
 async function removeUnwantedTemplateFilesPerFlavor(extensionDirectory: string, extensionFlavor: ExtensionFlavorValue) {
+  // Preact needs the tsconfig.json to set the `"jsxImportSource": "preact"` so it can properly build
+  if (extensionFlavor === 'preact') {
+    return
+  }
+
   // tsconfig.json file is only needed in extension folder to inform the IDE
   // About the `react-jsx` tsconfig option, so IDE don't complain about missing react import
   if (extensionFlavor !== 'typescript-react') {

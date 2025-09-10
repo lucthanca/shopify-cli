@@ -8,7 +8,7 @@ import {
   ConvertDevToTransferDisabledSchema,
   ConvertDevToTransferDisabledStoreVariables,
 } from '../../api/graphql/convert_dev_to_transfer_disabled_store.js'
-import {ClientName, DeveloperPlatformClient} from '../../utilities/developer-platform-client.js'
+import {ClientName, DeveloperPlatformClient, Paginateable} from '../../utilities/developer-platform-client.js'
 import {sleep} from '@shopify/cli-kit/node/system'
 import {renderInfo, renderTasks} from '@shopify/cli-kit/node/ui'
 import {firstPartyDev} from '@shopify/cli-kit/node/context/local'
@@ -26,17 +26,25 @@ import {outputSuccess} from '@shopify/cli-kit/node/output'
  * @returns The selected store
  */
 export async function selectStore(
-  stores: OrganizationStore[],
+  storesSearch: Paginateable<{stores: OrganizationStore[]}>,
   org: Organization,
   developerPlatformClient: DeveloperPlatformClient,
 ): Promise<OrganizationStore> {
   const showDomainOnPrompt = developerPlatformClient.clientName === ClientName.AppManagement
+  let onSearchForStoresByName
+  if (developerPlatformClient.supportsStoreSearch) {
+    onSearchForStoresByName = async (term: string) => developerPlatformClient.devStoresForOrg(org.id, term)
+  }
   // If no stores, guide the developer through creating one
   // Then, with a store selected, make sure its transfer-disabled, prompting to convert if needed
-  let store = await selectStorePrompt(stores, showDomainOnPrompt)
+  let store = await selectStorePrompt({
+    onSearchForStoresByName,
+    ...storesSearch,
+    showDomainOnPrompt,
+  })
   if (!store) {
     renderInfo({
-      body: await developerPlatformClient.getCreateDevStoreLink(org.id),
+      body: await developerPlatformClient.getCreateDevStoreLink(org),
     })
     await sleep(5)
 
@@ -45,8 +53,8 @@ export async function selectStore(
       throw new CancelExecution()
     }
 
-    const data = await waitForCreatedStore(org.id, developerPlatformClient)
-    store = await selectStore(data, org, developerPlatformClient)
+    const stores = await waitForCreatedStore(org.id, developerPlatformClient)
+    store = await selectStore({stores, hasMorePages: false}, org, developerPlatformClient)
   }
 
   let storeIsValid = await convertToTransferDisabledStoreIfNeeded(
@@ -57,7 +65,7 @@ export async function selectStore(
   )
   while (!storeIsValid) {
     // eslint-disable-next-line no-await-in-loop
-    store = await selectStorePrompt(stores, showDomainOnPrompt)
+    store = await selectStorePrompt({stores: [store], hasMorePages: false, showDomainOnPrompt})
     if (!store) {
       throw new CancelExecution()
     }
@@ -88,7 +96,7 @@ async function waitForCreatedStore(
       task: async () => {
         for (let i = 0; i < retries; i++) {
           // eslint-disable-next-line no-await-in-loop
-          const stores = await developerPlatformClient.devStoresForOrg(orgId)
+          const {stores} = await developerPlatformClient.devStoresForOrg(orgId)
           if (stores.length > 0) {
             data = stores
             return

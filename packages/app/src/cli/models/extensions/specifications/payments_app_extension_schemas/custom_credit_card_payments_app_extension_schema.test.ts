@@ -33,7 +33,6 @@ const config: CustomCreditCardPaymentsAppExtensionConfigType = {
   checkout_hosted_fields: ['fields'],
   ui_extension_handle: 'sample-ui-extension',
   description: 'Custom credit card extension',
-  metafields: [],
   input: {
     metafield_identifiers: {
       namespace: 'namespace',
@@ -66,28 +65,6 @@ describe('CustomCreditCardPaymentsAppExtensionSchema', () => {
           expected: 'payments.custom-credit-card.render',
           path: ['targeting', 0, 'target'],
           message: 'Invalid literal value, expected "payments.custom-credit-card.render"',
-        },
-      ]),
-    )
-  })
-
-  test('returns an error if encryption certificate fingerprint is blank', async () => {
-    // When/Then
-    expect(() =>
-      CustomCreditCardPaymentsAppExtensionSchema.parse({
-        ...config,
-        encryption_certificate_fingerprint: '',
-      }),
-    ).toThrowError(
-      new zod.ZodError([
-        {
-          code: zod.ZodIssueCode.too_small,
-          minimum: 1,
-          type: 'string',
-          inclusive: true,
-          exact: false,
-          message: "Encryption certificate fingerprint can't be blank",
-          path: ['encryption_certificate_fingerprint'],
         },
       ]),
     )

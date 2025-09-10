@@ -1,4 +1,4 @@
-name: changeset
+name: Changeset Release
 
 on:
   workflow_dispatch:
@@ -12,13 +12,17 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PNPM_VERSION: '8.15.7'
+  PNPM_VERSION: '10.11.1'
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  release:
-    name: Release
+  changeset-release:
+    name: Changeset Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
     steps:
       - uses: actions/checkout@v3
         # This makes Actions fetch all Git history so that Changesets can generate changelogs with the correct commits
@@ -27,13 +31,15 @@ jobs:
       - name: Setup deps
         uses: ./.github/actions/setup-cli-deps
         with:
-          node-version: 18.20.3
+          node-version: 24.1.0
       - name: Create Release Pull Request
-        uses: Wandalen/wretry.action@e6cf3db7de3777ba5f999f903c2f4efdd9ac7288 # pin@v1.0.36
+        uses: changesets/action@e9cc34b540dd3ad1b030c57fd97269e8f6ad905a #  pin@v1
         with:
-          action: changesets/action@e9cc34b540dd3ad1b030c57fd97269e8f6ad905a # pin@v1
-          attempt_limit: 3
-          attempt_delay: 2000
-          with: |
-            version: pnpm changeset-manifests
-            title: Version Packages - ${{ github.ref_name }}
+          version: pnpm changeset-manifests
+          title: Version Packages - ${{ github.ref_name }}
+          publish: pnpm release latest
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHOPIFY_CLI_BUILD_REPO: ${{ github.repository }}

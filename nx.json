@@ -26,11 +26,7 @@
       ]
     },
     "lint": {},
-    "lint:fix": {
-      "dependsOn": [
-        "build"
-      ]
-    },
+    "lint:fix": {},
     "type-check": {
       "dependsOn": [
         "^build"
@@ -56,7 +52,9 @@
           "graphql-codegen:generate:partners",
           "graphql-codegen:generate:webhooks",
           "graphql-codegen:postfix",
-          "graphql-codegen:formatting"
+          "graphql-codegen:formatting",
+          "type-check",
+          "lint"
         ],
         "runtimeCacheInputs": [
           "node bin/cache-inputs.js || node ../../bin/cache-inputs.js || node ../bin/cache-inputs.js"
@@ -75,5 +73,8 @@
     "production": [
       "default"
     ]
+  },
+  "tui": {
+    "autoExit": true
   }
 }

@@ -2,15 +2,16 @@ import {appFlags} from '../../flags.js'
 import {dev, DevOptions} from '../../services/dev.js'
 import {showApiKeyDeprecationWarning} from '../../prompts/deprecation-warnings.js'
 import {checkFolderIsValidApp} from '../../models/app/loader.js'
-import AppCommand, {AppCommandOutput} from '../../utilities/app-command.js'
+import AppLinkedCommand, {AppLinkedCommandOutput} from '../../utilities/app-linked-command.js'
 import {linkedAppContext} from '../../services/app-context.js'
 import {storeContext} from '../../services/store-context.js'
+import {getTunnelMode} from '../../services/dev/tunnel-mode.js'
 import {Flags} from '@oclif/core'
 import {normalizeStoreFqdn} from '@shopify/cli-kit/node/context/fqdn'
 import {globalFlags} from '@shopify/cli-kit/node/cli'
 import {addPublicMetadata} from '@shopify/cli-kit/node/metadata'
 
-export default class Dev extends AppCommand {
+export default class Dev extends AppLinkedCommand {
   static summary = 'Run the app.'
 
   static descriptionWithMarkdown = `[Builds the app](https://shopify.dev/docs/api/shopify-cli/app/app-build) and lets you preview it on a [development store](https://shopify.dev/docs/apps/tools/development-stores) or [Plus sandbox store](https://help.shopify.com/partners/dashboard/managing-stores/plus-sandbox-store).
@@ -50,56 +51,52 @@ If you're using the Ruby app template, then you need to complete the following s
       exclusive: ['config'],
     }),
     store: Flags.string({
-      hidden: false,
       char: 's',
       description: 'Store URL. Must be an existing development or Shopify Plus sandbox store.',
       env: 'SHOPIFY_FLAG_STORE',
       parse: async (input) => normalizeStoreFqdn(input),
     }),
     'skip-dependencies-installation': Flags.boolean({
-      hidden: false,
       description: 'Skips the installation of dependencies. Deprecated, use workspaces instead.',
       env: 'SHOPIFY_FLAG_SKIP_DEPENDENCIES_INSTALLATION',
       default: false,
     }),
     'no-update': Flags.boolean({
-      hidden: false,
       description: 'Skips the Partners Dashboard URL update step.',
       env: 'SHOPIFY_FLAG_NO_UPDATE',
       default: false,
     }),
     'subscription-product-url': Flags.string({
-      hidden: false,
       description: 'Resource URL for subscription UI extension. Format: "/products/{productId}"',
       env: 'SHOPIFY_FLAG_SUBSCRIPTION_PRODUCT_URL',
     }),
     'checkout-cart-url': Flags.string({
-      hidden: false,
       description: 'Resource URL for checkout UI extension. Format: "/cart/{productVariantID}:{productQuantity}"',
       env: 'SHOPIFY_FLAG_CHECKOUT_CART_URL',
     }),
     'tunnel-url': Flags.string({
-      hidden: false,
       description:
         'Use a custom tunnel, it must be running before executing dev. Format: "https://my-tunnel-url:port".',
       env: 'SHOPIFY_FLAG_TUNNEL_URL',
-      exclusive: ['no-tunnel', 'tunnel'],
+      exclusive: ['tunnel'],
     }),
-    'no-tunnel': Flags.boolean({
-      hidden: true,
-      description: 'Automatic creation of a tunnel is disabled. Service entry point will listen to localhost instead',
-      env: 'SHOPIFY_FLAG_NO_TUNNEL',
+    'use-localhost': Flags.boolean({
+      description:
+        "Service entry point will listen to localhost. A tunnel won't be used. Will work for testing many app features, but not those that directly invoke your app (E.g: Webhooks)",
+      env: 'SHOPIFY_FLAG_USE_LOCALHOST',
       default: false,
-      exclusive: ['tunnel-url', 'tunnel'],
+      exclusive: ['tunnel-url'],
+    }),
+    'localhost-port': Flags.integer({
+      description: 'Port to use for localhost.',
+      env: 'SHOPIFY_FLAG_LOCALHOST_PORT',
     }),
     theme: Flags.string({
-      hidden: false,
       char: 't',
       description: 'Theme ID or name of the theme app extension host theme.',
       env: 'SHOPIFY_FLAG_THEME',
     }),
     'theme-app-extension-port': Flags.integer({
-      hidden: false,
       description: 'Local port of the theme app extension development server.',
       env: 'SHOPIFY_FLAG_THEME_APP_EXTENSION_PORT',
     }),
@@ -125,36 +122,38 @@ If you're using the Ruby app template, then you need to complete the following s
     return 'app dev stop'
   }
 
-  public async run(): Promise<AppCommandOutput> {
+  public async run(): Promise<AppLinkedCommandOutput> {
     const {flags} = await this.parse(Dev)
 
-    if (!flags['api-key']) {
-      if (process.env.SHOPIFY_API_KEY) {
-        flags['api-key'] = process.env.SHOPIFY_API_KEY
-      }
+    if (!flags['api-key'] && process.env.SHOPIFY_API_KEY) {
+      flags['api-key'] = process.env.SHOPIFY_API_KEY
     }
     if (flags['api-key']) {
       await showApiKeyDeprecationWarning()
     }
-    const apiKey = flags['client-id'] || flags['api-key']
 
-    await addPublicMetadata(() => ({
-      cmd_app_dependency_installation_skipped: flags['skip-dependencies-installation'],
-      cmd_app_reset_used: flags.reset,
-      cmd_dev_tunnel_type: flags['tunnel-url'] ? 'custom' : 'cloudflare',
-    }))
+    const tunnelMode = await getTunnelMode({
+      useLocalhost: flags['use-localhost'],
+      tunnelUrl: flags['tunnel-url'],
+      localhostPort: flags['localhost-port'],
+    })
 
-    const commandConfig = this.config
+    await addPublicMetadata(() => {
+      return {
+        cmd_app_dependency_installation_skipped: flags['skip-dependencies-installation'],
+        cmd_app_reset_used: flags.reset,
+        cmd_dev_tunnel_type: tunnelMode.mode,
+      }
+    })
 
     await checkFolderIsValidApp(flags.path)
 
     const appContextResult = await linkedAppContext({
       directory: flags.path,
-      clientId: apiKey,
+      clientId: flags['client-id'] ?? flags['api-key'],
       forceRelink: flags.reset,
       userProvidedConfigName: flags.config,
     })
-
     const store = await storeContext({
       appContextResult,
       storeFqdn: flags.store,
@@ -167,16 +166,15 @@ If you're using the Ruby app template, then you need to complete the following s
       directory: flags.path,
       update: !flags['no-update'],
       skipDependenciesInstallation: flags['skip-dependencies-installation'],
-      commandConfig,
+      commandConfig: this.config,
       subscriptionProductUrl: flags['subscription-product-url'],
       checkoutCartUrl: flags['checkout-cart-url'],
-      tunnelUrl: flags['tunnel-url'],
-      noTunnel: flags['no-tunnel'],
       theme: flags.theme,
       themeExtensionPort: flags['theme-app-extension-port'],
       notify: flags.notify,
       graphiqlPort: flags['graphiql-port'],
       graphiqlKey: flags['graphiql-key'],
+      tunnel: tunnelMode,
     }
 
     await dev(devOptions)

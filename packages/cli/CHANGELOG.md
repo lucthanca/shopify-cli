@@ -1,8 +1,103 @@
 # @shopify/cli
 
-## 3.72.2
+## 3.84.1
 
-## 3.72.1
+## 3.84.0
+
+### Minor Changes
+
+- 1f4fd78: Allow multi-environment theme commands to accept flags from CLI
+- 9b872dc: Update fetched AI instructions
+- b382a89: Prompt for confirmation before running multi-environment theme commands that allow `--force` flag
+- 281b50b: Allow theme rename command to be run with multiple environments
+- a12a7cc: Allow commands run with multiple environments to require "one of" a list of flags
+
+### Patch Changes
+
+- 1161f7a: Update docs for 'ignore' and 'only' flags for theme push/pull
+
+## 3.83.0
+
+### Minor Changes
+
+- 521fb07: Add new `theme duplicate` command to duplicate store themes
+- 39dbde0: Add `--no-build` flag to `shopify app deploy`. When provided, the deploy command will assume you have already run `shopify app build` or otherwise put build files in place.
+
+## 3.82.0
+
+### Patch Changes
+
+- 690bfa9: Fixes the `Encryption certificate fingerprint can't be blank` error when generating a credit card payments extension with the `shopify app generate extension` command.
+
+## 3.81.1
+
+## 3.81.0
+
+### Minor Changes
+
+- 24aa2dd: Drop support for Node 18
+- ce3dfdc: Print all log messages to stderr instead of stdout
+
+### Patch Changes
+
+- e18c9f6: Shopify/skeleton-theme is the default theme for `theme init`
+
+## 3.80.0
+
+## 3.79.0
+
+### Patch Changes
+
+- 0e244dc: Update cli-hydrogen 10.0.1
+- 5839055: Added formatting and comment preserving TOML support via @shopify/toml-patch; opt-in by setting "SHOPIFY_CLI_USE_WASM_TOML_PATCH"
+
+## 3.78.0
+
+### Minor Changes
+
+- 4c6acaa: Add HTTP proxy support with the environment variables `SHOPIFY_HTTP_PROXY` and `SHOPIFY_HTTPS_PROXY`
+
+  If your proxy uses basic authentication, provide the auth in the following format:
+
+  ```bash
+  SHOPIFY_HTTP_PROXY=http://user:pass@yourproxy.com:PORT
+  ```
+
+### Patch Changes
+
+- daf44e8: Updated `@shopify/cli-hydrogen` dependency to `9.0.9`.
+
+## 3.77.0
+
+## 3.76.0
+
+### Minor Changes
+
+- fd32347: Add multi-environment infrastructure and allow multiple environment usage in theme list command
+
+### Patch Changes
+
+- c72ce71: Update to cli-hydrogen 9.0.6
+- 5ad63a4: Update to cli-hydrogen 9.0.7
+- e9b8582: Upgrade cli-hydrogen to 9.0.8 for 2025.1.2
+
+## 3.75.0
+
+### Patch Changes
+
+- 07289c7: Bump cli-hydrogen to 9.0.5
+
+## 3.74.0
+
+## 3.73.0
+
+### Minor Changes
+
+- beab713acd: Developers can now use the `shopify theme metafields pull` command to download metafields, which can then be used for more refined code completion.
+
+### Patch Changes
+
+- cbfc36ca88: Bump cli-hydrogen package to 9.0.3
 
 ## 3.72.0
 

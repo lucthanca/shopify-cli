@@ -1,7 +1,7 @@
 /* eslint-disable tsdoc/syntax */
 import {hasRequiredThemeDirectories, mountThemeFileSystem} from '../utilities/theme-fs.js'
 import {uploadTheme} from '../utilities/theme-uploader.js'
-import {currentDirectoryConfirmed, themeComponent} from '../utilities/theme-ui.js'
+import {ensureDirectoryConfirmed, themeComponent} from '../utilities/theme-ui.js'
 import {ensureThemeStore} from '../utilities/theme-store.js'
 import {DevelopmentThemeManager} from '../utilities/development-theme-manager.js'
 import {findOrSelectTheme} from '../utilities/theme-selector.js'
@@ -9,9 +9,9 @@ import {Role} from '../utilities/theme-selector/fetch.js'
 import {configureCLIEnvironment} from '../utilities/cli-config.js'
 import {runThemeCheck} from '../commands/theme/check.js'
 import {AdminSession, ensureAuthenticatedThemes} from '@shopify/cli-kit/node/session'
-import {createTheme, fetchChecksums, themePublish} from '@shopify/cli-kit/node/themes/api'
+import {themeCreate, fetchChecksums, themePublish} from '@shopify/cli-kit/node/themes/api'
 import {Result, Theme} from '@shopify/cli-kit/node/themes/types'
-import {outputInfo} from '@shopify/cli-kit/node/output'
+import {outputResult} from '@shopify/cli-kit/node/output'
 import {
   renderConfirmationPrompt,
   RenderConfirmationPromptOptions,
@@ -43,6 +43,7 @@ interface JsonOutput {
     editor_url: string
     preview_url: string
     warning?: string
+    errors?: Result['errors']
   }
 }
 
@@ -55,9 +56,6 @@ export interface PushFlags {
 
   /** Store URL. It can be the store prefix (example) or the full myshopify.com URL (example.myshopify.com, https://example.myshopify.com). */
   store?: string
-
-  /** The environment to apply to the current command. */
-  environment?: string
 
   /** Theme ID or name of the remote theme. */
   theme?: string
@@ -74,7 +72,7 @@ export interface PushFlags {
   /** Runs the push command without deleting local files. */
   nodelete?: boolean
 
-  /** Download only the specified files (Multiple flags allowed). */
+  /** Push only the specified files (Multiple flags allowed). */
   only?: string[]
 
   /** Skip downloading the specified files (Multiple flags allowed). */
@@ -133,7 +131,7 @@ export async function push(flags: PushFlags): Promise<void> {
   const adminSession = await ensureAuthenticatedThemes(store, flags.password)
 
   const workingDirectory = path ? resolvePath(path) : cwd()
-  if (!(await hasRequiredThemeDirectories(workingDirectory)) && !(await currentDirectoryConfirmed(force))) {
+  if (!(await hasRequiredThemeDirectories(workingDirectory)) && !(await ensureDirectoryConfirmed(force))) {
     return
   }
 
@@ -210,14 +208,12 @@ async function handlePushOutput(
   session: AdminSession,
   options: PushOptions,
 ) {
-  const hasErrors = hasUploadErrors(results)
-
   if (options.json) {
-    handleJsonOutput(theme, hasErrors, session)
+    handleJsonOutput(theme, session, results)
   } else if (options.publish) {
-    handlePublishOutput(hasErrors, session)
+    handlePublishOutput(session, results)
   } else {
-    handleOutput(theme, hasErrors, session)
+    handleOutput(theme, session, results)
   }
 }
 
@@ -225,10 +221,10 @@ async function handlePushOutput(
  * Handles the JSON output for the push operation.
  *
  * @param theme - The theme being pushed.
- * @param hasErrors - Indicates if there were any errors during the push operation.
  * @param session - The admin session for the theme.
+ * @param results - The map of upload results.
  */
-function handleJsonOutput(theme: Theme, hasErrors: boolean, session: AdminSession) {
+function handleJsonOutput(theme: Theme, session: AdminSession, results: Map<string, Result>) {
   const output: JsonOutput = {
     theme: {
       id: theme.id,
@@ -239,21 +235,33 @@ function handleJsonOutput(theme: Theme, hasErrors: boolean, session: AdminSessio
       preview_url: themePreviewUrl(theme, session),
     },
   }
-
+  const hasErrors = hasUploadErrors(results)
   if (hasErrors) {
     const message = `The theme '${theme.name}' was pushed with errors`
     output.theme.warning = message
+
+    // Add errors from results
+    const errors: {[key: string]: string[]} = {}
+    for (const [key, result] of results.entries()) {
+      if (!result.success && result.errors?.asset) {
+        errors[key] = result.errors.asset
+      }
+    }
+    if (Object.keys(errors).length > 0) {
+      output.theme.errors = errors
+    }
   }
-  outputInfo(JSON.stringify(output))
+  outputResult(JSON.stringify(output))
 }
 
 /**
  * Handles the output for the publish operation.
  *
- * @param hasErrors - Indicates if there were any errors during the push operation.
  * @param session - The admin session for the theme.
+ * @param results - The map of upload results.
  */
-function handlePublishOutput(hasErrors: boolean, session: AdminSession) {
+function handlePublishOutput(session: AdminSession, results: Map<string, Result>) {
+  const hasErrors = hasUploadErrors(results)
   if (hasErrors) {
     renderWarning({body: `Your theme was published with errors and is now live at https://${session.storeFqdn}`})
   } else {
@@ -265,10 +273,11 @@ function handlePublishOutput(hasErrors: boolean, session: AdminSession) {
  * Handles the output for the push operation.
  *
  * @param theme - The theme being pushed.
- * @param hasErrors - Indicates if there were any errors during the push operation.
  * @param session - The admin session for the theme.
+ * @param results - The map of upload results.
  */
-function handleOutput(theme: Theme, hasErrors: boolean, session: AdminSession) {
+function handleOutput(theme: Theme, session: AdminSession, results: Map<string, Result>) {
+  const hasErrors = hasUploadErrors(results)
   const nextSteps = [
     [
       {
@@ -309,7 +318,7 @@ export async function createOrSelectTheme(adminSession: AdminSession, flags: Pus
     return themeManager.findOrCreate()
   } else if (unpublished) {
     const themeName = theme ?? (await promptThemeName('Name of the new theme'))
-    return createTheme(
+    return themeCreate(
       {
         name: themeName,
         role: UNPUBLISHED_THEME_ROLE,

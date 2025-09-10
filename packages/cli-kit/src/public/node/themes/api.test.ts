@@ -1,6 +1,8 @@
 import {
-  createTheme,
+  themeCreate,
   themeDelete,
+  themeDuplicate,
+  fetchTheme,
   fetchThemes,
   ThemeParams,
   themeUpdate,
@@ -8,45 +10,108 @@ import {
   fetchChecksums,
   bulkUploadThemeAssets,
   AssetParams,
-  deleteThemeAsset,
+  deleteThemeAssets,
+  parseThemeFileContent,
 } from './api.js'
 import {Operation} from './types.js'
 import {ThemeDelete} from '../../../cli/api/graphql/admin/generated/theme_delete.js'
+import {ThemeDuplicate} from '../../../cli/api/graphql/admin/generated/theme_duplicate.js'
 import {ThemeUpdate} from '../../../cli/api/graphql/admin/generated/theme_update.js'
 import {ThemePublish} from '../../../cli/api/graphql/admin/generated/theme_publish.js'
+import {ThemeCreate} from '../../../cli/api/graphql/admin/generated/theme_create.js'
 import {GetThemeFileChecksums} from '../../../cli/api/graphql/admin/generated/get_theme_file_checksums.js'
 import {ThemeFilesUpsert} from '../../../cli/api/graphql/admin/generated/theme_files_upsert.js'
-import {OnlineStoreThemeFileBodyInputType} from '../../../cli/api/graphql/admin/generated/types.js'
-import {test, vi, expect, describe} from 'vitest'
-import {adminRequestDoc, restRequest, supportedApiVersions} from '@shopify/cli-kit/node/api/admin'
-import {AbortError} from '@shopify/cli-kit/node/error'
+import {ThemeFilesDelete} from '../../../cli/api/graphql/admin/generated/theme_files_delete.js'
+import {GetThemes} from '../../../cli/api/graphql/admin/generated/get_themes.js'
+import {GetTheme} from '../../../cli/api/graphql/admin/generated/get_theme.js'
+import {adminRequestDoc, supportedApiVersions} from '../api/admin.js'
+import {AbortError} from '../error.js'
+import {test, vi, expect, describe, beforeEach} from 'vitest'
+import {ClientError} from 'graphql-request'
 
 vi.mock('@shopify/cli-kit/node/api/admin')
 vi.mock('@shopify/cli-kit/node/system')
+vi.stubGlobal('fetch', vi.fn())
 
 const session = {token: 'token', storeFqdn: 'my-shop.myshopify.com', refresh: async () => {}}
 const themeAccessSession = {...session, token: 'shptka_token'}
 const sessions = {CLI: session, 'Theme Access': themeAccessSession}
+const expectedApiOptions = expect.objectContaining({
+  maxRetryTimeMs: 90000,
+  useAbortSignal: false,
+  useNetworkLevelRetry: true,
+})
+
+describe('fetchTheme', () => {
+  test('returns a store theme', async () => {
+    vi.mocked(adminRequestDoc).mockResolvedValue({
+      theme: {id: 'gid://shopify/OnlineStoreTheme/123', name: 'store theme 1', role: 'MAIN', processing: false},
+    })
+
+    // When
+    const theme = await fetchTheme(123, session)
+
+    // Then
+    expect(adminRequestDoc).toHaveBeenCalledWith({
+      query: GetTheme,
+      session,
+      variables: {id: 'gid://shopify/OnlineStoreTheme/123'},
+      responseOptions: {handleErrors: false},
+      preferredBehaviour: expectedApiOptions,
+    })
+
+    expect(theme).not.toBeNull()
+    expect(theme!.id).toEqual(123)
+    expect(theme!.name).toEqual('store theme 1')
+    expect(theme!.processing).toBeFalsy()
+  })
+
+  test('returns undefined when a theme is not found', async () => {
+    const errorResponse = {
+      status: 200,
+      errors: [{message: 'Tema não existe'} as any],
+    }
+    vi.mocked(adminRequestDoc).mockRejectedValue(new ClientError(errorResponse, {query: ''}))
+
+    // When
+    const theme = await fetchTheme(123, session)
+
+    // Then
+    expect(theme).toBeUndefined()
+    expect(adminRequestDoc).toHaveBeenCalledWith({
+      query: GetTheme,
+      session,
+      variables: {id: 'gid://shopify/OnlineStoreTheme/123'},
+      responseOptions: {handleErrors: false},
+      preferredBehaviour: expectedApiOptions,
+    })
+  })
+})
 
 describe('fetchThemes', () => {
   test('returns store themes', async () => {
     // Given
-    vi.mocked(restRequest).mockResolvedValue({
-      json: {
-        themes: [
-          {id: 123, name: 'store theme 1', processing: false},
-          {id: 456, name: 'store theme 2', processing: true},
+    vi.mocked(adminRequestDoc).mockResolvedValue({
+      themes: {
+        nodes: [
+          {id: 'gid://shopify/OnlineStoreTheme/123', name: 'store theme 1', role: 'UNPUBLISHED', processing: false},
+          {id: 'gid://shopify/OnlineStoreTheme/456', name: 'store theme 2', role: 'MAIN', processing: true},
         ],
+        pageInfo: {hasNextPage: false, endCursor: null},
       },
-      status: 200,
-      headers: {},
     })
 
     // When
     const themes = await fetchThemes(session)
 
     // Then
-    expect(restRequest).toHaveBeenCalledWith('GET', '/themes', session, undefined, {fields: 'id,name,role,processing'})
+    expect(adminRequestDoc).toHaveBeenCalledWith({
+      query: GetThemes,
+      session,
+      variables: {after: null},
+      responseOptions: {handleErrors: false},
+      preferredBehaviour: expectedApiOptions,
+    })
     expect(themes).toHaveLength(2)
 
     expect(themes[0]!.id).toEqual(123)
@@ -91,9 +156,15 @@ describe('fetchChecksums', () => {
     const checksum = await fetchChecksums(id, session)
 
     // Then
-    expect(adminRequestDoc).toHaveBeenCalledWith(GetThemeFileChecksums, session, {
-      id: `gid://shopify/OnlineStoreTheme/${id}`,
-      after: null,
+    expect(adminRequestDoc).toHaveBeenCalledWith({
+      query: GetThemeFileChecksums,
+      session,
+      variables: {
+        id: `gid://shopify/OnlineStoreTheme/${id}`,
+        after: null,
+      },
+      responseOptions: {handleErrors: false},
+      preferredBehaviour: expectedApiOptions,
     })
     expect(checksum).toHaveLength(3)
     expect(checksum[0]!.key).toEqual('snippets/product-variant-picker.liquid')
@@ -105,33 +176,40 @@ describe('fetchChecksums', () => {
   })
 })
 
-describe('createTheme', () => {
+describe('themeCreate', () => {
   const id = 123
   const name = 'new theme'
   const role = 'unpublished'
-  const processing = false
   const params: ThemeParams = {name, role}
 
   test('creates a theme', async () => {
     // Given
-    vi.mocked(restRequest).mockResolvedValueOnce({
-      json: {theme: {id, name, role, processing}},
-      status: 200,
-      headers: {},
-    })
-
-    vi.mocked(adminRequestDoc).mockResolvedValue({
-      themeFilesUpsert: {
-        upsertedThemeFiles: [],
+    vi.mocked(adminRequestDoc).mockResolvedValueOnce({
+      themeCreate: {
+        theme: {
+          id: `gid://shopify/OnlineStoreTheme/${id}`,
+          name,
+          role,
+        },
         userErrors: [],
       },
     })
 
     // When
-    const theme = await createTheme(params, session)
+    const theme = await themeCreate(params, session)
 
     // Then
-    expect(restRequest).toHaveBeenCalledWith('POST', '/themes', session, {theme: params}, {})
+    expect(adminRequestDoc).toHaveBeenCalledWith({
+      query: ThemeCreate,
+      session,
+      variables: {
+        name: params.name,
+        source: 'https://cdn.shopify.com/static/online-store/theme-skeleton.zip',
+        role: 'UNPUBLISHED',
+      },
+      responseOptions: {handleErrors: false},
+      preferredBehaviour: expectedApiOptions,
+    })
     expect(theme).not.toBeNull()
     expect(theme!.id).toEqual(id)
     expect(theme!.name).toEqual(name)
@@ -139,34 +217,34 @@ describe('createTheme', () => {
     expect(theme!.processing).toBeFalsy()
   })
 
-  test('does not upload minimum theme assets when src is provided', async () => {
+  test('does not use skeletonThemeCdn when src is provided', async () => {
     // Given
-    vi.mocked(restRequest)
-      .mockResolvedValueOnce({
-        json: {theme: {id, name, role, processing}},
-        status: 200,
-        headers: {},
-      })
-      .mockResolvedValueOnce({
-        json: {
-          results: [],
+    vi.mocked(adminRequestDoc).mockResolvedValueOnce({
+      themeCreate: {
+        theme: {
+          id: `gid://shopify/OnlineStoreTheme/${id}`,
+          name,
+          role,
         },
-        status: 207,
-        headers: {},
-      })
+        userErrors: [],
+      },
+    })
 
     // When
-    const theme = await createTheme({...params, src: 'https://example.com/theme.zip'}, session)
+    const theme = await themeCreate({...params, src: 'https://example.com/theme.zip'}, session)
 
     // Then
-    expect(restRequest).toHaveBeenCalledWith(
-      'POST',
-      '/themes',
+    expect(adminRequestDoc).toHaveBeenCalledWith({
+      query: ThemeCreate,
       session,
-      {theme: {...params, src: 'https://example.com/theme.zip'}},
-      {},
-    )
-    expect(restRequest).not.toHaveBeenCalledWith('PUT', `/themes/${id}/assets/bulk`, session, undefined, {})
+      variables: {
+        name: params.name,
+        source: 'https://example.com/theme.zip',
+        role: 'UNPUBLISHED',
+      },
+      responseOptions: {handleErrors: false},
+      preferredBehaviour: expectedApiOptions,
+    })
   })
 })
 
@@ -194,9 +272,14 @@ describe('themeUpdate', () => {
       const theme = await themeUpdate(id, params, session)
 
       // Then
-      expect(adminRequestDoc).toHaveBeenCalledWith(ThemeUpdate, session, {
-        id: `gid://shopify/OnlineStoreTheme/${id}`,
-        input: {name},
+      expect(adminRequestDoc).toHaveBeenCalledWith({
+        query: ThemeUpdate,
+        session,
+        variables: {
+          id: `gid://shopify/OnlineStoreTheme/${id}`,
+          input: {name},
+        },
+        preferredBehaviour: expectedApiOptions,
       })
       expect(theme).not.toBeNull()
       expect(theme!.id).toEqual(id)
@@ -226,9 +309,14 @@ describe('themeUpdate', () => {
     const theme = await themeUpdate(id, {}, session)
 
     // Then
-    expect(adminRequestDoc).toHaveBeenCalledWith(ThemeUpdate, session, {
-      id: `gid://shopify/OnlineStoreTheme/${id}`,
-      input: {},
+    expect(adminRequestDoc).toHaveBeenCalledWith({
+      query: ThemeUpdate,
+      session,
+      variables: {
+        id: `gid://shopify/OnlineStoreTheme/${id}`,
+        input: {},
+      },
+      preferredBehaviour: expectedApiOptions,
     })
     expect(theme).not.toBeNull()
     expect(theme!.id).toEqual(id)
@@ -260,7 +348,12 @@ describe('themePublish', () => {
       const theme = await themePublish(id, session)
 
       // Then
-      expect(adminRequestDoc).toHaveBeenCalledWith(ThemePublish, session, {id: `gid://shopify/OnlineStoreTheme/${id}`})
+      expect(adminRequestDoc).toHaveBeenCalledWith({
+        query: ThemePublish,
+        session,
+        variables: {id: `gid://shopify/OnlineStoreTheme/${id}`},
+        preferredBehaviour: expectedApiOptions,
+      })
       expect(theme).not.toBeNull()
       expect(theme!.id).toEqual(id)
       expect(theme!.name).toEqual(name)
@@ -269,63 +362,61 @@ describe('themePublish', () => {
   }
 })
 
-describe('deleteThemeAsset', () => {
+describe('deleteThemeAssets', () => {
   test('deletes a theme asset', async () => {
     // Given
     const id = 123
     const key = 'snippets/product-variant-picker.liquid'
 
-    vi.mocked(restRequest).mockResolvedValue({
-      json: {message: 'snippets/product-variant-picker.liquid was succesfully deleted'},
-      status: 200,
-      headers: {},
+    vi.mocked(adminRequestDoc).mockResolvedValue({
+      themeFilesDelete: {
+        deletedThemeFiles: [{filename: key}],
+        userErrors: [],
+      },
     })
 
     // When
-    const output = await deleteThemeAsset(id, key, session)
+    const output = await deleteThemeAssets(id, [key], session)
 
     // Then
-    expect(restRequest).toHaveBeenCalledWith('DELETE', `/themes/${id}/assets`, session, undefined, {'asset[key]': key})
-    expect(output).toBe(true)
+    expect(adminRequestDoc).toHaveBeenCalledWith({
+      query: ThemeFilesDelete,
+      session,
+      variables: {
+        themeId: `gid://shopify/OnlineStoreTheme/${id}`,
+        files: [key],
+      },
+      preferredBehaviour: expectedApiOptions,
+    })
+    expect(output).toEqual([{key, success: true, operation: 'DELETE'}])
   })
 
-  test('returns true when attemping to delete an nonexistent asset', async () => {
+  test('returns success when attempting to delete nonexistent assets', async () => {
     // Given
     const id = 123
     const key = 'snippets/product-variant-picker.liquid'
 
-    vi.mocked(restRequest).mockResolvedValue({
-      json: {},
-      status: 200,
-      headers: {},
+    vi.mocked(adminRequestDoc).mockResolvedValue({
+      themeFilesDelete: {
+        deletedThemeFiles: [{filename: key}],
+        userErrors: [],
+      },
     })
 
     // When
-    const output = await deleteThemeAsset(id, key, session)
+    const output = await deleteThemeAssets(id, [key], session)
 
     // Then
-    expect(restRequest).toHaveBeenCalledWith('DELETE', `/themes/${id}/assets`, session, undefined, {'asset[key]': key})
-    expect(output).toBe(true)
-  })
-
-  test('throws an AbortError when the server responds with a 403', async () => {
-    // Given
-    const id = 123
-    const key = 'config/settings_data.json'
-    const message = 'You are not authorized to edit themes on "my-shop.myshopify.com".'
-
-    vi.mocked(restRequest).mockResolvedValue({
-      json: {message},
-      status: 403,
-      headers: {},
+    expect(adminRequestDoc).toHaveBeenCalledWith({
+      query: ThemeFilesDelete,
+      session,
+      variables: {
+        themeId: `gid://shopify/OnlineStoreTheme/${id}`,
+        files: [key],
+      },
+      preferredBehaviour: expectedApiOptions,
     })
-
-    // When
-    const deletePromise = () => deleteThemeAsset(id, key, session)
-
-    // Then
-    await expect(deletePromise).rejects.toThrow(new AbortError(message))
-    expect(restRequest).toHaveBeenCalledWith('DELETE', `/themes/${id}/assets`, session, undefined, {'asset[key]': key})
+    expect(output).toEqual([{key, success: true, operation: 'DELETE'}])
   })
 })
 
@@ -334,7 +425,6 @@ describe('themeDelete', () => {
     test(`deletes a theme with graphql with a ${sessionType} session`, async () => {
       // Given
       const id = 123
-      const name = 'store theme'
 
       vi.mocked(adminRequestDoc).mockResolvedValue({
         themeDelete: {
@@ -347,8 +437,49 @@ describe('themeDelete', () => {
       const response = await themeDelete(id, session)
 
       // Then
-      expect(adminRequestDoc).toHaveBeenCalledWith(ThemeDelete, session, {id: `gid://shopify/OnlineStoreTheme/${id}`})
+      expect(adminRequestDoc).toHaveBeenCalledWith({
+        query: ThemeDelete,
+        session,
+        variables: {id: `gid://shopify/OnlineStoreTheme/${id}`},
+        preferredBehaviour: expectedApiOptions,
+      })
       expect(response).toBe(true)
+    })
+  }
+})
+
+describe('themeDuplicate', () => {
+  for (const [sessionType, session] of Object.entries(sessions)) {
+    test(`duplicates a theme with graphql with a ${sessionType} session`, async () => {
+      // Given
+      const id = 123
+      const name = 'duplicate theme'
+
+      vi.mocked(adminRequestDoc).mockResolvedValue({
+        themeDuplicate: {
+          newTheme: {id: `gid://shopify/OnlineStoreTheme/${id}`, name, role: 'UNPUBLISHED'},
+          userErrors: [],
+        },
+      })
+      // When
+      const response = await themeDuplicate(id, name, session)
+
+      // Then
+      expect(adminRequestDoc).toHaveBeenCalledWith({
+        query: ThemeDuplicate,
+        session,
+        variables: {id: `gid://shopify/OnlineStoreTheme/${id}`, name},
+        preferredBehaviour: expectedApiOptions,
+        version: '2025-10',
+        responseOptions: {
+          onResponse: expect.any(Function),
+        },
+      })
+      expect(response).toMatchObject({
+        theme: {id, name, role: 'unpublished'},
+        userErrors: [],
+        requestId: undefined,
+      })
     })
   }
 })
@@ -394,18 +525,27 @@ describe('bulkUploadThemeAssets', async () => {
     const bulkUploadresults = await bulkUploadThemeAssets(id, assets, session)
 
     // Then
-    expect(adminRequestDoc).toHaveBeenCalledWith(ThemeFilesUpsert, session, {
-      themeId: `gid://shopify/OnlineStoreTheme/${id}`,
-      files: [
-        {
-          filename: 'snippets/product-variant-picker.liquid',
-          body: {value: 'content', type: 'TEXT' as OnlineStoreThemeFileBodyInputType},
-        },
-        {
-          filename: 'templates/404.json',
-          body: {value: 'to_be_replaced_with_hash', type: 'TEXT' as OnlineStoreThemeFileBodyInputType},
-        },
-      ],
+    expect(adminRequestDoc).toHaveBeenCalledWith({
+      query: ThemeFilesUpsert,
+      session,
+      variables: {
+        themeId: `gid://shopify/OnlineStoreTheme/${id}`,
+        files: [
+          {
+            filename: 'snippets/product-variant-picker.liquid',
+            body: {value: 'content', type: 'TEXT'},
+          },
+          {
+            filename: 'templates/404.json',
+            body: {value: 'to_be_replaced_with_hash', type: 'TEXT'},
+          },
+        ],
+      },
+      preferredBehaviour: expect.objectContaining({
+        maxRetryTimeMs: 90000,
+        useAbortSignal: false,
+        useNetworkLevelRetry: true,
+      }),
     })
 
     expect(bulkUploadresults).toEqual([
@@ -446,18 +586,27 @@ describe('bulkUploadThemeAssets', async () => {
     const bulkUploadresults = await bulkUploadThemeAssets(id, assets, session)
 
     // Then
-    expect(adminRequestDoc).toHaveBeenCalledWith(ThemeFilesUpsert, session, {
-      themeId: `gid://shopify/OnlineStoreTheme/${id}`,
-      files: [
-        {
-          filename: 'snippets/product-variant-picker.liquid',
-          body: {value: 'content', type: 'TEXT' as OnlineStoreThemeFileBodyInputType},
-        },
-        {
-          filename: 'templates/404.json',
-          body: {value: 'to_be_replaced_with_hash', type: 'TEXT' as OnlineStoreThemeFileBodyInputType},
-        },
-      ],
+    expect(adminRequestDoc).toHaveBeenCalledWith({
+      query: ThemeFilesUpsert,
+      session,
+      variables: {
+        themeId: `gid://shopify/OnlineStoreTheme/${id}`,
+        files: [
+          {
+            filename: 'snippets/product-variant-picker.liquid',
+            body: {value: 'content', type: 'TEXT'},
+          },
+          {
+            filename: 'templates/404.json',
+            body: {value: 'to_be_replaced_with_hash', type: 'TEXT'},
+          },
+        ],
+      },
+      preferredBehaviour: expect.objectContaining({
+        maxRetryTimeMs: 90000,
+        useAbortSignal: false,
+        useNetworkLevelRetry: true,
+      }),
     })
 
     expect(bulkUploadresults).toEqual([
@@ -497,5 +646,57 @@ describe('bulkUploadThemeAssets', async () => {
     await expect(bulkUploadThemeAssets(id, assets, session)).rejects.toThrow(
       'Error uploading theme files: Something went wrong',
     )
+  })
+})
+
+describe('parseThemeFileContent', () => {
+  const normalContent = 'foo'
+  const base64Content = Buffer.from(normalContent).toString('base64')
+
+  describe('when the body type is OnlineStoreThemeFileBodyText', () => {
+    test('returns the content field as a value', async () => {
+      const body = {
+        __typename: 'OnlineStoreThemeFileBodyText' as const,
+        content: normalContent,
+      }
+
+      const parsedContent = await parseThemeFileContent(body)
+
+      expect(parsedContent).toEqual({value: normalContent})
+    })
+  })
+
+  describe('when the body type is OnlineStoreThemeFileBodyBase64', () => {
+    test('returns the contentBase64 field as an attachment', async () => {
+      const body = {
+        __typename: 'OnlineStoreThemeFileBodyBase64' as const,
+        contentBase64: base64Content,
+      }
+
+      const parsedContent = await parseThemeFileContent(body)
+
+      expect(parsedContent).toEqual({attachment: base64Content})
+    })
+  })
+
+  describe('when the body type is OnlineStoreThemeFileBodyUrl', () => {
+    beforeEach(() => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(normalContent, {
+          headers: {'Content-Type': 'application/javascript'},
+        }),
+      )
+    })
+
+    test('fetches the content from the url and returns it as an attachment', async () => {
+      const body = {
+        __typename: 'OnlineStoreThemeFileBodyUrl' as const,
+        url: 'https://example.com/foo',
+      }
+
+      const parsedContent = await parseThemeFileContent(body)
+
+      expect(parsedContent).toEqual({attachment: base64Content})
+    })
   })
 })

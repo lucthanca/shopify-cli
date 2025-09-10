@@ -1,35 +1,48 @@
 import {parseCookies, serializeCookies} from './cookies.js'
 import {defaultHeaders, storefrontReplaceTemplatesParams} from './storefront-utils.js'
 import {DevServerSession, DevServerRenderContext} from './types.js'
+import {createFetchError} from '../errors.js'
 import {outputDebug} from '@shopify/cli-kit/node/output'
 import {AdminSession} from '@shopify/cli-kit/node/session'
-import {fetch, type Response} from '@shopify/cli-kit/node/http'
-import {createError} from 'h3'
+import {getThemeKitAccessDomain} from '@shopify/cli-kit/node/context/local'
 
 export async function render(session: DevServerSession, context: DevServerRenderContext): Promise<Response> {
   const url = buildStorefrontUrl(session, context)
+  const headers = await buildHeaders(session, context)
+  let response: Response
+
   const replaceTemplates = Object.keys({...context.replaceTemplates, ...context.replaceExtensionTemplates})
 
-  outputDebug(`→ Rendering ${url} (with ${replaceTemplates})...`)
+  if (replaceTemplates.length > 0) {
+    outputDebug(`→ Rendering ${url} (with ${replaceTemplates})...`)
 
-  const bodyParams = storefrontReplaceTemplatesParams(context)
-  const headers = await buildHeaders(session, context)
+    const bodyParams = storefrontReplaceTemplatesParams(context)
 
-  const response = await fetch(url, {
-    method: 'POST',
-    body: bodyParams,
-    headers: {
-      ...headers,
-      ...defaultHeaders(),
-    },
-  }).catch((error: Error) => {
-    throw createError({
-      status: 502,
-      statusText: 'Bad Gateway',
-      data: {url},
-      cause: error,
+    // eslint-disable-next-line no-restricted-globals
+    response = await fetch(url, {
+      method: 'POST',
+      body: bodyParams,
+      headers: {
+        ...headers,
+        ...defaultHeaders(),
+      },
+    }).catch((error) => {
+      throw createFetchError(error, url)
     })
-  })
+  } else {
+    outputDebug(`→ Rendering ${url}...`)
+
+    // eslint-disable-next-line no-restricted-globals
+    response = await fetch(url, {
+      method: context.method,
+      headers: {
+        ...headers,
+        ...defaultHeaders(),
+      },
+    }).catch((error) => {
+      throw createFetchError(error, url)
+    })
+  }
 
   const requestId = response.headers.get('x-request-id')
   outputDebug(`← ${response.status} (request_id: ${requestId})`)
@@ -37,9 +50,16 @@ export async function render(session: DevServerSession, context: DevServerRender
   /**
    * Theme Access app requests return the 'application/json' content type.
    * However, patched renderings will never patch JSON requests; so we're
-   * consistently discarding the content type.
+   * only discarding the content type for non-JSON responses that will be patched.
    */
-  response.headers.delete('Content-Type')
+  const contentType = response.headers.get('Content-Type')
+  const isJsonResponse = contentType?.includes('application/json')
+
+  response = new Response(response.body, response)
+
+  if (!isJsonResponse) {
+    response.headers.delete('Content-Type')
+  }
 
   return response
 }
@@ -117,7 +137,7 @@ function buildStorefrontUrl(session: DevServerSession, {path, sectionId, appBloc
 
 export function buildBaseStorefrontUrl(session: AdminSession) {
   if (isThemeAccessSession(session)) {
-    return 'https://theme-kit-access.shopifyapps.com/cli/sfr'
+    return `https://${getThemeKitAccessDomain()}/cli/sfr`
   } else {
     return `https://${session.storeFqdn}`
   }

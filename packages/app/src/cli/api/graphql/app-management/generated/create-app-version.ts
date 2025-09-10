@@ -6,8 +6,7 @@ import {TypedDocumentNode as DocumentNode} from '@graphql-typed-document-node/co
 
 export type CreateAppVersionMutationVariables = Types.Exact<{
   appId: Types.Scalars['ID']['input']
-  appSource: Types.AppSourceInput
-  name: Types.Scalars['String']['input']
+  version: Types.AppVersionInput
   metadata?: Types.InputMaybe<Types.VersionMetadataInput>
 }>
 
@@ -20,7 +19,8 @@ export type CreateAppVersionMutation = {
         userIdentifier: string
         handle: string
         config: JsonMapType
-        specification: {identifier: string; externalIdentifier: string; name: string}
+        target?: string | null
+        specification: {identifier: string; externalIdentifier: string; name: string; managementExperience: string}
       }[]
       metadata: {versionTag?: string | null; message?: string | null}
     } | null
@@ -49,13 +49,8 @@ export const CreateAppVersion = {
         },
         {
           kind: 'VariableDefinition',
-          variable: {kind: 'Variable', name: {kind: 'Name', value: 'appSource'}},
-          type: {kind: 'NonNullType', type: {kind: 'NamedType', name: {kind: 'Name', value: 'AppSourceInput'}}},
-        },
-        {
-          kind: 'VariableDefinition',
-          variable: {kind: 'Variable', name: {kind: 'Name', value: 'name'}},
-          type: {kind: 'NonNullType', type: {kind: 'NamedType', name: {kind: 'Name', value: 'String'}}},
+          variable: {kind: 'Variable', name: {kind: 'Name', value: 'version'}},
+          type: {kind: 'NonNullType', type: {kind: 'NamedType', name: {kind: 'Name', value: 'AppVersionInput'}}},
         },
         {
           kind: 'VariableDefinition',
@@ -77,13 +72,8 @@ export const CreateAppVersion = {
               },
               {
                 kind: 'Argument',
-                name: {kind: 'Name', value: 'appSource'},
-                value: {kind: 'Variable', name: {kind: 'Name', value: 'appSource'}},
-              },
-              {
-                kind: 'Argument',
-                name: {kind: 'Name', value: 'name'},
-                value: {kind: 'Variable', name: {kind: 'Name', value: 'name'}},
+                name: {kind: 'Name', value: 'version'},
+                value: {kind: 'Variable', name: {kind: 'Name', value: 'version'}},
               },
               {
                 kind: 'Argument',
@@ -161,6 +151,7 @@ export const CreateAppVersion = {
           {kind: 'Field', name: {kind: 'Name', value: 'userIdentifier'}},
           {kind: 'Field', name: {kind: 'Name', value: 'handle'}},
           {kind: 'Field', name: {kind: 'Name', value: 'config'}},
+          {kind: 'Field', name: {kind: 'Name', value: 'target'}},
           {
             kind: 'Field',
             name: {kind: 'Name', value: 'specification'},
@@ -170,6 +161,7 @@ export const CreateAppVersion = {
                 {kind: 'Field', name: {kind: 'Name', value: 'identifier'}},
                 {kind: 'Field', name: {kind: 'Name', value: 'externalIdentifier'}},
                 {kind: 'Field', name: {kind: 'Name', value: 'name'}},
+                {kind: 'Field', name: {kind: 'Name', value: 'managementExperience'}},
               ],
             },
           },

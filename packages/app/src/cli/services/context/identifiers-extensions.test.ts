@@ -29,6 +29,8 @@ import {ExtensionCreateSchema} from '../../api/graphql/extension_create.js'
 import appPOSSpec from '../../models/extensions/specifications/app_config_point_of_sale.js'
 import appWebhookSubscriptionSpec from '../../models/extensions/specifications/app_config_webhook_subscription.js'
 import {getModulesToMigrate} from '../dev/migrate-app-module.js'
+import {ExtensionSpecification} from '../../models/extensions/specification.js'
+import {PartnersClient} from '../../utilities/developer-platform-client/partners-client.js'
 import {beforeEach, describe, expect, vi, test, beforeAll} from 'vitest'
 import {AbortSilentError} from '@shopify/cli-kit/node/error'
 import {setPathValue} from '@shopify/cli-kit/common/object'
@@ -263,8 +265,8 @@ beforeAll(async () => {
       build: {
         command: 'make build',
         path: 'dist/index.wasm',
+        wasm_opt: true,
       },
-      metafields: [],
       configuration_ui: false,
       api_version: '2022-07',
     },
@@ -276,7 +278,6 @@ beforeAll(async () => {
       name: 'Payments Extension',
       type: 'payments_extension',
       description: 'Payments App Extension',
-      metafields: [],
       api_version: '2022-07',
       payment_session_url: 'https://example.com/payment',
       supported_countries: ['US'],
@@ -884,12 +885,12 @@ describe('ensureExtensionsIds: Migrates extension', () => {
       },
     })
 
-    expect(migrateExtensionsToUIExtension).toBeCalledWith(
+    expect(migrateExtensionsToUIExtension).toBeCalledWith({
       extensionsToMigrate,
-      opts.appId,
+      appId: opts.appId,
       remoteExtensions,
-      opts.developerPlatformClient,
-    )
+      migrationClient: expect.any(PartnersClient),
+    })
   })
 })
 
@@ -922,8 +923,8 @@ describe('deployConfirmed: handle non existent uuid managed extensions', () => {
     expect(developerPlatformClient.createExtension).not.toBeCalled()
     expect(got).toEqual({
       extensions: {},
-      extensionIds: {'point-of-sale': 'C_A'},
-      extensionsNonUuidManaged: {'point-of-sale': 'UUID_C_A'},
+      extensionIds: {point_of_sale: 'C_A'},
+      extensionsNonUuidManaged: {point_of_sale: 'UUID_C_A'},
     })
   })
   test('when the include config on deploy flag is disabled configuration extensions are not created', async () => {
@@ -976,8 +977,8 @@ describe('deployConfirmed: handle non existent uuid managed extensions', () => {
     expect(developerPlatformClient.createExtension).toBeCalledTimes(1)
     expect(got).toEqual({
       extensions: {},
-      extensionIds: {'app-access': 'C_A'},
-      extensionsNonUuidManaged: {'app-access': 'UUID_C_A'},
+      extensionIds: {app_access: 'C_A'},
+      extensionsNonUuidManaged: {app_access: 'UUID_C_A'},
     })
   })
   test('when the include config on deploy flag is disabled but draft extensions should be used configuration extensions are created with context', async () => {
@@ -1042,8 +1043,8 @@ describe('deployConfirmed: handle existent uuid managed extensions', () => {
     expect(developerPlatformClient.createExtension).not.toHaveBeenCalled()
     expect(got).toEqual({
       extensions: {},
-      extensionIds: {'point-of-sale': 'C_A'},
-      extensionsNonUuidManaged: {'point-of-sale': 'UUID_C_A'},
+      extensionIds: {point_of_sale: 'C_A'},
+      extensionsNonUuidManaged: {point_of_sale: 'UUID_C_A'},
     })
   })
 })
@@ -1078,8 +1079,8 @@ describe('deployConfirmed: extensions that should be managed in the TOML', () =>
     expect(developerPlatformClient.createExtension).not.toHaveBeenCalled()
     expect(got).toEqual({
       extensions: {},
-      extensionIds: {'point-of-sale': 'C_A'},
-      extensionsNonUuidManaged: {'point-of-sale': 'UUID_C_A'},
+      extensionIds: {point_of_sale: 'C_A'},
+      extensionsNonUuidManaged: {point_of_sale: 'UUID_C_A'},
     })
   })
 })
@@ -1103,7 +1104,7 @@ describe('groupRegistrationByUidStrategy', () => {
         type: 'POINT_OF_SALE',
       },
     ]
-    const specifications = [appPOSSpec, appWebhookSubscriptionSpec]
+    const specifications = [appPOSSpec, appWebhookSubscriptionSpec] as ExtensionSpecification[]
 
     const dynamicUidStrategySpec = specifications.find(
       (spec) => spec.identifier === dynamicUidStrategyExtension.type.toLowerCase(),

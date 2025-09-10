@@ -29,6 +29,13 @@ export const pnpmWorkspaceFile = 'pnpm-workspace.yaml'
 
 /** An array containing the lockfiles from all the package managers */
 export const lockfiles: Lockfile[] = [yarnLockfile, pnpmLockfile, npmLockfile, bunLockfile]
+export const lockfilesByManager: {[key in PackageManager]: Lockfile | undefined} = {
+  yarn: yarnLockfile,
+  npm: npmLockfile,
+  pnpm: pnpmLockfile,
+  bun: bunLockfile,
+  unknown: undefined,
+}
 export type Lockfile = 'yarn.lock' | 'package-lock.json' | 'pnpm-lock.yaml' | 'bun.lockb'
 
 /**
@@ -103,10 +110,18 @@ export function packageManagerFromUserAgent(env = process.env): PackageManager {
  * @returns The dependency manager
  */
 export async function getPackageManager(fromDirectory: string): Promise<PackageManager> {
-  const directory = await captureOutput('npm', ['prefix'], {cwd: fromDirectory})
-  outputDebug(outputContent`Obtaining the dependency manager in directory ${outputToken.path(directory)}...`)
-  const packageJson = joinPath(directory, 'package.json')
-  if (!(await fileExists(packageJson))) {
+  let directory: string | undefined
+  let packageJson: string | undefined
+  try {
+    directory = await captureOutput('npm', ['prefix'], {cwd: fromDirectory})
+    outputDebug(outputContent`Obtaining the dependency manager in directory ${outputToken.path(directory)}...`)
+    packageJson = joinPath(directory, 'package.json')
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch {
+    // if problems locating directoy/package file, we use user agent instead
+  }
+
+  if (!directory || !packageJson || !(await fileExists(packageJson))) {
     return packageManagerFromUserAgent()
   }
   const yarnLockPath = joinPath(directory, yarnLockfile)

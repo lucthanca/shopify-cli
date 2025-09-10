@@ -43,6 +43,8 @@ import {
   chmod as fsChmod,
   access as fsAccess,
   rename as fsRename,
+  unlink as fsUnlink,
+  readdir as fsReaddir,
 } from 'fs/promises'
 import {pathToFileURL as pathToFile} from 'url'
 import * as os from 'os'
@@ -329,12 +331,22 @@ export function fileSizeSync(path: string): number {
 }
 
 /**
- * Unlink a file at the given path.
+ * Synchronously unlink a file at the given path.
+ *
  * @param path - Path to the file.
- * @returns A promise that resolves when the file is unlinked.
  */
 export function unlinkFileSync(path: string): void {
   fsUnlinkSync(path)
+}
+
+/**
+ * Unlink a file at the given path.
+ *
+ * @param path - Path to the file.
+ * @returns A promise that resolves when the file is unlinked.
+ */
+export function unlinkFile(path: string): Promise<void> {
+  return fsUnlink(path)
 }
 
 /**
@@ -503,6 +515,43 @@ export async function glob(pattern: Pattern | Pattern[], options?: GlobOptions):
 export function pathToFileURL(path: string): URL {
   return pathToFile(path)
 }
+
+/**
+ * The operating system-specific end-of-line marker:
+ * - `\n` on POSIX
+ * - `\r\n` on Windows
+ */
+export type EOL = '\r\n' | '\n'
+
+/**
+ * Detects the end-of-line marker used in a string.
+ *
+ * @param content - file contents to analyze
+ *
+ * @returns The detected end-of-line marker
+ */
+export function detectEOL(content: string): EOL {
+  const match = content.match(/\r\n|\n/g)
+
+  if (!match) {
+    return defaultEOL()
+  }
+
+  const crlf = match.filter((eol) => eol === '\r\n').length
+  const lf = match.filter((eol) => eol === '\n').length
+
+  return crlf > lf ? '\r\n' : '\n'
+}
+
+/**
+ * Returns the operating system's end-of-line marker.
+ *
+ * @returns The OS-specific end-of-line marker
+ */
+export function defaultEOL(): EOL {
+  return os.EOL as EOL
+}
+
 /**
  * Find a file by walking parent directories.
  *
@@ -534,4 +583,43 @@ export interface MatchGlobOptions {
  */
 export function matchGlob(key: string, pattern: string, options?: MatchGlobOptions): boolean {
   return minimatch(key, pattern, options)
+}
+
+/**
+ * Read a directory.
+ * @param path - The path to read.
+ * @returns A promise that resolves to an array of file names.
+ */
+export function readdir(path: string): Promise<string[]> {
+  return fsReaddir(path)
+}
+
+/**
+ * Copies the contents of a directory to another directory.
+ *
+ * @param srcDir - Source directory path.
+ * @param destDir - Destination directory path.
+ */
+export async function copyDirectoryContents(srcDir: string, destDir: string): Promise<void> {
+  if (!(await fileExists(srcDir))) {
+    throw new Error(`Source directory ${srcDir} does not exist`)
+  }
+
+  if (!(await fileExists(destDir))) {
+    await mkdir(destDir)
+  }
+
+  // Get all files and directories in the source directory
+  const items = await glob(joinPath(srcDir, '**/*'))
+
+  const filesToCopy = []
+
+  for (const item of items) {
+    const relativePath = item.replace(srcDir, '').replace(/^[/\\]/, '')
+    const destPath = joinPath(destDir, relativePath)
+
+    filesToCopy.push(copyFile(item, destPath))
+  }
+
+  await Promise.all(filesToCopy)
 }

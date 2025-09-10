@@ -1,8 +1,138 @@
 # @shopify/cli-kit
 
-## 3.72.2
+## 3.84.1
 
-## 3.72.1
+## 3.84.0
+
+### Minor Changes
+
+- 9b872dc: Update fetched AI instructions
+
+### Patch Changes
+
+- 864c687: Fix custom network behaviour for theme commands not being used
+- 40e2d6f: Fixed typo in isARetryableNetworkError to catch network socket disconnected
+- 62d6b9a: Add more retryable errors and improve consistency of identifying retryable conditions
+
+## 3.83.0
+
+### Minor Changes
+
+- 521fb07: Add new `theme duplicate` command to duplicate store themes
+
+### Patch Changes
+
+- b1feb1d: Add CLI theme login auth error next steps
+- ee353e9: No longer abort theme GraphQL requests on the client side
+- e73e9a5: Fix an issue with running `theme package` with a default environment present
+
+## 3.82.0
+
+### Patch Changes
+
+- 0edf793: Fix issue where SHOPIFY_FLAG_ENVIRONMENT was not being used correctly when passed as an environment variable
+- eee4978: Add error handling when the authorization service is not reachable
+
+## 3.81.1
+
+### Patch Changes
+
+- b838f21: Remove git remote after cloning theme in `theme init` command to prevent accidental pushes to the skeleton theme repository
+
+## 3.81.0
+
+### Minor Changes
+
+- 23d4b0b: Deprecated functions:
+  - consoleLog: should be replaced by outputResult (stdout) or outputInfo (stderr)
+  - consoleWarn: should be replaced by outputInfo (stderr)
+  - consoleError: should be replaced by outputInfo (stderr)
+  - renderText: should be replaced by outputResult (stdout) or outputInfo (stderr)
+- eb19684: Removed overrides for SHOPIFY_CLI_NO_THEME_BUNDLING and SHOPIFY_CLI_BUNDLED_THEME_CLI
+- 24aa2dd: Drop support for Node 18
+
+### Patch Changes
+
+- 16406ae: Display richer error messages when apps are misconfigured
+- 9a9e51e: Fix issues with timeouts for theme dev
+
+## 3.80.0
+
+### Patch Changes
+
+- 0cc639e: Fix app dev issue about unavailable port when HOST env var is set
+- 431fd6e: [internal] Add method to read local repo's latest git tag
+- 8422004: Increase network timeout for theme API requests to prevent failures during long operations. This utilizes the internal request behaviour mechanism for theme-related Admin API calls, setting a longer timeout (90s) specifically for potentially slow actions like asset uploads/downloads.
+- 6517e43: Enable authentication errors to display store names
+
+## 3.79.0
+
+### Minor Changes
+
+- f9ac5cf: Update `getPathValue`, `setPathValue`, and `unsetPathValue` to support the lodash `PropertyPath` type
+- 68b53f6: Add support to use App Management API with CLI Tokens.
+- 031feb7: Add new `unsetPathValue` function which wraps the `unset` function from lodash
+
+### Patch Changes
+
+- 0b1e588: Show the multiple CLI installations warning only once a day
+- 94362f9: Avoid showing errors when fetching notifications in background
+- 4f17786: Prevent deploy requests from timing out
+- 036bcaf: Fix a bug with binary downloads timing out
+- 164bbbe: The hidden `.shopify` folder now has its own generic .gitignore file
+
+## 3.78.0
+
+## 3.77.0
+
+### Minor Changes
+
+- 73c78ac: Enable automatic retry for network errors (i.e. DNS or connectivity issues). Can be disabled with SHOPIFY_CLI_SKIP_NETWORK_LEVEL_RETRY
+- 36dccd6: Automatic cancellation of slow network requests
+
+## 3.76.0
+
+### Minor Changes
+
+- 4a3895c: Use GraphQL for theme creation
+
+### Patch Changes
+
+- 38e8d7b: Hide serialized_script fields in verbose logs
+- b1ed29d: Fix binary files being corrupted on theme pull
+- 6449aa6: Fetch notifications in background
+
+## 3.75.0
+
+### Minor Changes
+
+- 4aee075: Improve display of loading bar in no-color mode
+
+### Patch Changes
+
+- da606a6: Improve mechanism that adds `.shopify` to `.gitignore` to avoid duplicate entries
+- ab407f3: Add `addToGitIgnore` to cli-kit to append entries to existing `.gitignore` files
+
+## 3.74.0
+
+### Minor Changes
+
+- bb3b100731: Add tabular data display component to UI kit
+
+### Patch Changes
+
+- 7e34195c30: Store theme asset upload errors encountered while running the theme dev command
+- 1a5aec270d: Fix `shopify theme dev` to no longer fail when development themes expire in internationalized stores
+- 369351435b: Ensure no-color mode is respected for warnings and errors
+- f004019bb9: Utilize Admin API to determine if a storefront is password protected
+
+## 3.73.0
+
+### Patch Changes
+
+- beab713acd: Introduce method to fetch metafield definitions by ownerType from Admin API
+- 4d722c64fc: Ensure git directory is clean when running `theme pull`
+- 03fb93e3c9: Remove all template lockfiles, except the one used to install dependencies
 
 ## 3.72.0
 

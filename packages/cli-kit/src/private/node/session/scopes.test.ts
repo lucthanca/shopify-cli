@@ -1,5 +1,4 @@
-import {allDefaultScopes, apiScopes} from './scopes.js'
-import {environmentVariables} from '../constants.js'
+import {allDefaultScopes, apiScopes, tokenExchangeScopes} from './scopes.js'
 import {describe, expect, test} from 'vitest'
 
 describe('allDefaultScopes', () => {
@@ -20,16 +19,16 @@ describe('allDefaultScopes', () => {
       'https://api.shopify.com/auth/shop.storefront-renderer.devtools',
       'https://api.shopify.com/auth/partners.app.cli.access',
       'https://api.shopify.com/auth/destinations.readonly',
+      'https://api.shopify.com/auth/organization.store-management',
+      'https://api.shopify.com/auth/organization.on-demand-user-access',
+      'https://api.shopify.com/auth/organization.apps.manage',
       ...customScopes,
     ])
   })
 
-  test('includes App Management and Store Management when the required env var is defined', async () => {
-    // Given
-    const envVars = {[environmentVariables.useAppManagement]: 'true'}
-
+  test('includes App Management and Store Management', async () => {
     // When
-    const got = allDefaultScopes([], envVars)
+    const got = allDefaultScopes([])
 
     // Then
     expect(got).toEqual([
@@ -41,6 +40,7 @@ describe('allDefaultScopes', () => {
       'https://api.shopify.com/auth/partners.app.cli.access',
       'https://api.shopify.com/auth/destinations.readonly',
       'https://api.shopify.com/auth/organization.store-management',
+      'https://api.shopify.com/auth/organization.on-demand-user-access',
       'https://api.shopify.com/auth/organization.apps.manage',
     ])
   })
@@ -62,5 +62,39 @@ describe('apiScopes', () => {
       'https://api.shopify.com/auth/partners.collaborator-relationships.readonly',
       ...customScopes,
     ])
+  })
+})
+
+describe('tokenExchangeScopes', () => {
+  test('returns transformed scopes for partners API', () => {
+    // When
+    const got = tokenExchangeScopes('partners')
+
+    // Then
+    expect(got).toEqual(['https://api.shopify.com/auth/partners.app.cli.access'])
+  })
+
+  test('returns transformed scopes for app-management API', () => {
+    // When
+    const got = tokenExchangeScopes('app-management')
+
+    // Then
+    expect(got).toEqual(['https://api.shopify.com/auth/organization.apps.manage'])
+  })
+
+  test('returns transformed scopes for business-platform API', () => {
+    // When
+    const got = tokenExchangeScopes('business-platform')
+
+    // Then
+    expect(got).toEqual(['https://api.shopify.com/auth/destinations.readonly'])
+  })
+
+  test('throws an error for unsupported APIs', () => {
+    // When/Then
+    expect(() => tokenExchangeScopes('admin')).toThrow('API not supported for token exchange: admin')
+    expect(() => tokenExchangeScopes('storefront-renderer')).toThrow(
+      'API not supported for token exchange: storefront-renderer',
+    )
   })
 })

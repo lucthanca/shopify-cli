@@ -41,13 +41,20 @@ export interface DevServerSession extends AdminSession {
    * Refreshes the current session, ensuring any tokens and session cookies
    * are up-to-date.
    */
-  refresh?: () => Promise<void>
+  refresh?: () => Promise<AdminSession>
 }
 
 /**
  * Mode for live reload behavior. Options: ['hot-reload', 'full-page', 'off']
  */
 export type LiveReload = 'hot-reload' | 'full-page' | 'off'
+
+/**
+ * Controls the visibility of the error overlay when an asset upload fails. Options: ['silent', 'default']
+ * - silent: Prevents the error overlay from appearing.
+ * - default: Displays the error overlay.
+ */
+export type ErrorOverlayMode = 'silent' | 'default'
 
 /**
  * Maintains the state of local and remote assets in theme development server.
@@ -72,6 +79,11 @@ export interface DevServerContext {
    * Path to the local theme directory.
    */
   directory: string
+
+  /**
+   * Identifies whether this context is for a theme or a theme extension.
+   */
+  type: 'theme' | 'theme-extension'
 
   /**
    * Additional options for the development server.
@@ -117,6 +129,11 @@ export interface DevServerContext {
      * Automatically open the theme preview in the default browser.
      */
     open: boolean
+
+    /**
+     * Controls the visibility of the error overlay when an asset upload fails.
+     */
+    errorOverlay: ErrorOverlayMode
   }
 }
 
@@ -165,7 +182,7 @@ export interface DevServerRenderContext {
   /**
    * Custom content to be replaced in the theme during rendering.
    */
-  replaceTemplates: {[key: string]: string}
+  replaceTemplates?: {[key: string]: string}
 
   /**
    * Custom content to be replaced during rendering.

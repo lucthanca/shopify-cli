@@ -1,9 +1,9 @@
-import {fetchTheme, createTheme} from './api.js'
+import {fetchTheme, themeCreate} from './api.js'
+import {Theme} from './types.js'
+import {DEVELOPMENT_THEME_ROLE, Role} from './utils.js'
 import {generateThemeName} from '../../../private/node/themes/generate-theme-name.js'
-import {AdminSession} from '@shopify/cli-kit/node/session'
-import {BugError} from '@shopify/cli-kit/node/error'
-import {Theme} from '@shopify/cli-kit/node/themes/types'
-import {DEVELOPMENT_THEME_ROLE, Role} from '@shopify/cli-kit/node/themes/utils'
+import {AdminSession} from '../session.js'
+import {BugError} from '../error.js'
 
 export abstract class ThemeManager {
   protected themeId: string | undefined
@@ -37,9 +37,9 @@ export abstract class ThemeManager {
   }
 
   async create(themeRole?: Role, themeName?: string) {
-    const name = themeName || generateThemeName(this.context)
-    const role = themeRole || DEVELOPMENT_THEME_ROLE
-    const theme = await createTheme(
+    const name = themeName ?? generateThemeName(this.context)
+    const role = themeRole ?? DEVELOPMENT_THEME_ROLE
+    const theme = await themeCreate(
       {
         name,
         role,

@@ -13,7 +13,9 @@ import HelpCommand from './cli/commands/help.js'
 import List from './cli/commands/notifications/list.js'
 import Generate from './cli/commands/notifications/generate.js'
 import ClearCache from './cli/commands/cache/clear.js'
+import {createGlobalProxyAgent} from 'global-agent'
 import ThemeCommands from '@shopify/theme'
+import StoreCommands from '@shopify/store'
 import {COMMANDS as HydrogenCommands, HOOKS as HydrogenHooks} from '@shopify/cli-hydrogen'
 import {commands as AppCommands} from '@shopify/app'
 import {commands as PluginCommandsCommands} from '@oclif/plugin-commands'
@@ -32,6 +34,13 @@ export {AppSensitiveMetadataHook, AppInitHook, AppPublicMetadataHook} from '@sho
 export {push, pull, fetchStoreThemes} from '@shopify/theme'
 
 export const HydrogenInitHook = HydrogenHooks.init
+
+// Setup global support for environment variable based proxy configuration.
+createGlobalProxyAgent({
+  environmentVariableNamespace: 'SHOPIFY_',
+  forceGlobalAgent: true,
+  socketConnectionTimeout: 60000,
+})
 
 // In some cases (for example when we boot the proxy server), when an exception is
 // thrown, no 'exit' signal is sent to the process. We don't understand this fully.
@@ -90,6 +99,12 @@ themeCommands.forEach((command) => {
   ;(ThemeCommands[command] as any).customPluginName = '@shopify/theme'
 })
 
+const storeCommands = Object.keys(StoreCommands) as (keyof typeof StoreCommands)[]
+storeCommands.forEach((command) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(StoreCommands[command] as any).customPluginName = '@shopify/store'
+})
+
 const hydrogenCommands = Object.keys(HydrogenCommands) as (keyof typeof HydrogenCommands)[]
 hydrogenCommands.forEach((command) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,6 +133,7 @@ pluginPluginsCommands.forEach((command) => {
 export const COMMANDS: any = {
   ...AppCommands,
   ...ThemeCommands,
+  ...StoreCommands,
   ...PluginPluginsCommands,
   ...DidYouMeanCommands,
   ...PluginCommandsCommands,

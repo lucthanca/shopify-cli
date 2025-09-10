@@ -131,7 +131,7 @@ export class ExtensionsPayloadStore extends EventEmitter {
 
   async updateExtension(
     extension: ExtensionInstance,
-    options: Omit<ExtensionDevOptions, 'appWatcher'>,
+    options: Omit<ExtensionsPayloadStoreOptions, 'appWatcher'>,
     bundlePath: string,
     development?: Partial<UIExtensionPayload['development']>,
   ) {
@@ -154,6 +154,19 @@ export class ExtensionsPayloadStore extends EventEmitter {
 
     this.rawPayload.extensions = payloadExtensions
 
+    this.emitUpdate([extension.devUUID])
+  }
+
+  deleteExtension(extension: ExtensionInstance) {
+    const index = this.rawPayload.extensions.findIndex((ext) => ext.uuid === extension.devUUID)
+    if (index !== -1) {
+      this.rawPayload.extensions.splice(index, 1)
+      this.emitUpdate([extension.devUUID])
+    }
+  }
+
+  async addExtension(extension: ExtensionInstance, bundlePath: string) {
+    this.rawPayload.extensions.push(await getUIExtensionPayload(extension, bundlePath, this.options))
     this.emitUpdate([extension.devUUID])
   }
 

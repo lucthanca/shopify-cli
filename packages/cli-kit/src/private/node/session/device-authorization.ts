@@ -6,7 +6,7 @@ import {shopifyFetch} from '../../../public/node/http.js'
 import {outputContent, outputDebug, outputInfo, outputToken} from '../../../public/node/output.js'
 import {AbortError, BugError} from '../../../public/node/error.js'
 import {isCloudEnvironment} from '../../../public/node/context/local.js'
-import {openURL} from '../../../public/node/system.js'
+import {isCI, openURL} from '../../../public/node/system.js'
 import {isTTY, keypress} from '../../../public/node/ui.js'
 
 export interface DeviceAuthorizationResponse {
@@ -41,7 +41,14 @@ export async function requestDeviceAuthorization(scopes: string[]): Promise<Devi
   })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const jsonResult: any = await response.json()
+  let jsonResult: any
+  try {
+    jsonResult = await response.json()
+  } catch (error) {
+    throw new BugError(
+      'Received unexpected response from the authorization service. If this issue persists, please contact support at https://help.shopify.com',
+    )
+  }
 
   outputDebug(outputContent`Received device authorization code: ${outputToken.json(jsonResult)}`)
   if (!jsonResult.device_code || !jsonResult.verification_uri_complete) {
@@ -50,7 +57,7 @@ export async function requestDeviceAuthorization(scopes: string[]): Promise<Devi
 
   outputInfo('\nTo run this command, log in to Shopify.')
 
-  if (!isTTY()) {
+  if (isCI()) {
     throw new AbortError(
       'Authorization is required to continue, but the current environment does not support interactive prompts.',
       'To resolve this, specify credentials in your environment, or run the command in an interactive environment such as your local terminal.',
@@ -60,13 +67,21 @@ export async function requestDeviceAuthorization(scopes: string[]): Promise<Devi
   outputInfo(outputContent`User verification code: ${jsonResult.user_code}`)
   const linkToken = outputToken.link(jsonResult.verification_uri_complete)
 
-  if (isCloudEnvironment()) {
+  const cloudMessage = () => {
     outputInfo(outputContent`👉 Open this link to start the auth process: ${linkToken}`)
+  }
+
+  if (isCloudEnvironment() || !isTTY()) {
+    cloudMessage()
   } else {
     outputInfo('👉 Press any key to open the login page on your browser')
     await keypress()
-    await openURL(jsonResult.verification_uri_complete)
-    outputInfo(outputContent`Opened link to start the auth process: ${linkToken}`)
+    const opened = await openURL(jsonResult.verification_uri_complete)
+    if (opened) {
+      outputInfo(outputContent`Opened link to start the auth process: ${linkToken}`)
+    } else {
+      cloudMessage()
+    }
   }
 
   return {

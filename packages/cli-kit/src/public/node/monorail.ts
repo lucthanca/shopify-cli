@@ -10,7 +10,7 @@ const url = 'https://monorail-edge.shopifysvc.com/v1/produce'
 type Optional<T> = T | null
 
 // This is the topic name of the main event we log to Monorail, the command tracker
-export const MONORAIL_COMMAND_TOPIC = 'app_cli3_command/1.15'
+export const MONORAIL_COMMAND_TOPIC = 'app_cli3_command/1.19'
 
 export interface Schemas {
   [MONORAIL_COMMAND_TOPIC]: {
@@ -29,6 +29,7 @@ export interface Schemas {
       env_plugin_installed_all?: Optional<string>
     }
     public: {
+      business_platform_id?: Optional<number>
       partner_id?: Optional<number>
       command: string
       project_type?: Optional<string>
@@ -144,6 +145,12 @@ export interface Schemas {
       app_web_frontend_any?: Optional<boolean>
       app_web_frontend_count?: Optional<number>
 
+      // Theme related commands
+      cmd_theme_timings?: Optional<string>
+      cmd_theme_errors?: Optional<string>
+      cmd_theme_retries?: Optional<string>
+      cmd_theme_events?: Optional<string>
+
       // Environment
       env_ci?: Optional<boolean>
       env_ci_platform?: Optional<string>
@@ -199,7 +206,7 @@ export async function publishMonorailEvent<TSchemaId extends keyof Schemas, TPay
     const body = JSON.stringify({schema_id: schemaId, payload})
     const headers = buildHeaders(currentTime)
 
-    const response = await fetch(url, {method: 'POST', body, headers})
+    const response = await fetch(url, {method: 'POST', body, headers}, 'non-blocking')
 
     if (response.status === 200) {
       outputDebug(outputContent`Analytics event sent: ${outputToken.json(sanitizePayload(payload))}`)

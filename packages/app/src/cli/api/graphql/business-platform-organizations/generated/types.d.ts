@@ -19,7 +19,21 @@ export type Scalars = {
   AccessRoleRecordId: {input: any; output: any}
   /** The ID for a ActionAudit. */
   ActionAuditID: {input: any; output: any}
+  /** The ID for a Address. */
+  AddressID: {input: any; output: any}
+  /** The ID for a BulkDataOperation. */
+  BulkDataOperationID: {input: any; output: any}
+  /** The ID for a BusinessUser. */
+  BusinessUserID: {input: any; output: any}
+  /** A signed decimal number, which supports arbitrary precision and is serialized as a string. */
+  Decimal: {input: any; output: any}
+  /** The ID for a DocumentAttachment. */
+  DocumentAttachmentID: {input: any; output: any}
+  /** The ID for a EntitySupportingDocument. */
+  EntitySupportingDocumentID: {input: any; output: any}
   GlobalID: {input: string; output: string}
+  /** The ID for a GovernmentIdentifier. */
+  GovernmentIdentifierID: {input: any; output: any}
   /** The ID for a Group. */
   GroupID: {input: any; output: any}
   /** An ISO 8601-encoded date */
@@ -34,16 +48,36 @@ export type Scalars = {
   OrganizationID: {input: any; output: any}
   /** The ID for a OrganizationUser. */
   OrganizationUserID: {input: any; output: any}
+  /** The ID for a PersonAlias. */
+  PersonAliasID: {input: any; output: any}
+  /** The ID for a Person. */
+  PersonID: {input: any; output: any}
+  /** The ID for a Principal. */
+  PrincipalID: {input: any; output: any}
+  /** The ID for a Property. */
+  PropertyID: {input: any; output: any}
   PropertyId: {input: string; output: string}
   PropertyPublicID: {input: string; output: string}
+  /** The ID for a PropertyTransferRequest. */
+  PropertyTransferRequestID: {input: any; output: any}
   /** The ID for a Role. */
   RoleID: {input: any; output: any}
+  /** The ID for a Shop. */
+  ShopID: {input: any; output: any}
   /** The ID for a ShopifyShop. */
   ShopifyShopID: {input: any; output: any}
   /** The ID for a StoreAdditionRequest. */
   StoreAdditionRequestID: {input: any; output: any}
+  SupportedEntityId: {input: any; output: any}
+  /** The ID for a SupportingDocument. */
+  SupportingDocumentID: {input: any; output: any}
   /** An RFC 3986 and RFC 3987 compliant URI string. */
   URL: {input: string; output: string}
+}
+
+export type OrganizationUserProvisionShopAccessInput = {
+  /** The shop to provision the requester on. */
+  shopifyShopId: Scalars['PropertyPublicID']['input']
 }
 
 export type Store = 'APP_DEVELOPMENT' | 'DEVELOPMENT' | 'DEVELOPMENT_SUPERSET' | 'PRODUCTION'

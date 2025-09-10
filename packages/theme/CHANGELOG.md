@@ -1,17 +1,254 @@
 # @shopify/theme
 
-## 3.72.2
+## 3.84.1
 
 ### Patch Changes
 
-- 1f0508f1a7: [Bug Fix] Reduce theme upload batch size to prevent timeout
-  - @shopify/cli-kit@3.72.2
+- cd1b5ac: No longer raise password errors when users use custom app passwords on `shopify theme pull/push` commands
+  - @shopify/cli-kit@3.84.1
 
-## 3.72.1
+## 3.84.0
+
+### Minor Changes
+
+- 1f4fd78: Allow multi-environment theme commands to accept flags from CLI
+- 9b872dc: Update fetched AI instructions
+- b382a89: Prompt for confirmation before running multi-environment theme commands that allow `--force` flag
+- 281b50b: Allow theme rename command to be run with multiple environments
+- d19e3d7: Uses \_shopify_essential cookie for storefront authentication
+- a12a7cc: Allow commands run with multiple environments to require "one of" a list of flags
 
 ### Patch Changes
 
-- @shopify/cli-kit@3.72.1
+- e301450: Remove request logs from the theme app extensions development server for a cleaner developer experience
+- d2ad0b4: Fixed theme dev error on HTTP 304 patched responses
+- 828bf47: Fixed issue with json files being returned as html/text content type in theme dev
+- b47f879: Removed workflows folder in .github when cloning skeleton theme
+- 1161f7a: Update docs for 'ignore' and 'only' flags for theme push/pull
+- 52f999f: Provide error when using non-theme access app password
+- 4839fb0: Remove .git dir after initializing new theme
+- 45ff625: Add store domain logging for theme commands and update monorail with new theme related even types
+- 2c2999c: Bump theme-tools packages
+- f330c9f: Add a warning for users declaring multiple environments in a command that only supports a single environment
+- bfc6325: Prevent `shopify app dev` sessions from opening multiple tabs in the browser during re-authentication
+- 9dd353c: Fix `shopify app dev` to serve local assets as expected
+- Updated dependencies [9b872dc]
+- Updated dependencies [864c687]
+- Updated dependencies [40e2d6f]
+- Updated dependencies [62d6b9a]
+  - @shopify/cli-kit@3.84.0
+
+## 3.83.0
+
+### Minor Changes
+
+- 521fb07: Add new `theme duplicate` command to duplicate store themes
+
+### Patch Changes
+
+- bb061b9: Fix performance issue on `shopify theme dev` command
+- ee353e9: No longer abort theme GraphQL requests on the client side
+- f4f29ec: Clean up theme command to run either single/no environment or multiple environments
+- 4ff98f1: Bump theme-tools packages
+- Updated dependencies [521fb07]
+- Updated dependencies [b1feb1d]
+- Updated dependencies [ee353e9]
+- Updated dependencies [e73e9a5]
+  - @shopify/cli-kit@3.83.0
+
+## 3.82.0
+
+### Patch Changes
+
+- 02b417b: Ensure all theme commands accept the --path flag
+- 9b52391: Add /listings folder to theme package command
+- 5188073: Improvement and fixes when handling multi-environment commands
+
+  - Fixes a bug where passing a single environment to multi-env commands would cause it to fail if the environment didn't have all of the required attributes for multi-env
+  - Updates output when running multi-env commands to ensure the results from each command don't overlap one another
+
+- 4176bf5: Add clarity to helper text when a store is missing
+- c9c07b5: Fix `_shopify_essential` issues related to data replication and unstable connections
+- Updated dependencies [0edf793]
+- Updated dependencies [eee4978]
+  - @shopify/cli-kit@3.82.0
+
+## 3.81.1
+
+### Patch Changes
+
+- b838f21: Remove git remote after cloning theme in `theme init` command to prevent accidental pushes to the skeleton theme repository
+- Updated dependencies [b838f21]
+  - @shopify/cli-kit@3.81.1
+
+## 3.81.0
+
+### Minor Changes
+
+- c39ba5e: Add default environment functionality
+
+  You may now optionally define a default environment in your environment config
+  file (e.g. `shopify.theme.toml`) that will be automatically injected into the
+  running command without needing to specify it. The name of the environment must
+  be `[environments.default]`.
+
+- eb19684: Removed overrides for SHOPIFY_CLI_NO_THEME_BUNDLING and SHOPIFY_CLI_BUNDLED_THEME_CLI
+- 24aa2dd: Drop support for Node 18
+- ce3dfdc: Print all log messages to stderr instead of stdout
+- 219e6d1: Prompt users who run `shopify theme init` to create their AI file
+
+### Patch Changes
+
+- e18c9f6: Shopify/skeleton-theme is the default theme for `theme init`
+- dc78463: Make local compiled assets more resilient to Liquid syntax errors.
+- 451a3a8: Update links to shopify dev docs
+- 53c2a92: Make hot reload events more resilient to Liquid syntax errors.
+- 642bb3e: Change `theme download` progress bar to render percentage
+- Updated dependencies [23d4b0b]
+- Updated dependencies [16406ae]
+- Updated dependencies [eb19684]
+- Updated dependencies [24aa2dd]
+- Updated dependencies [9a9e51e]
+  - @shopify/cli-kit@3.81.0
+
+## 3.80.0
+
+### Minor Changes
+
+- ae9e30d: Hot-reloading in `shopify theme dev` now supports `{% javascript %}` tags
+
+### Patch Changes
+
+- c2673be: Ensure that theme console paths are prefixed with a slash
+- 431fd6e: Update `theme init` to use skeleton theme
+- 9cae395: Display theme console errors inside banner
+- 737c9ab: Support hot reloading after changes to Liquid `{% stylesheet %}` tag.
+- eaa8b7c: Fix an issue with hot-reloading the compiled assets (scripts.js, block-scripts.js, etc)
+- 44e8bc7: Improved theme upload ordering to ensure layout files are uploaded before templates
+- acc904f: Bump Shopify/theme-tools packages to
+
+  - Fix validation for static blocks in JSON templates
+  - Introduce ability the disable theme checks for the next Liquid statement
+
+- Updated dependencies [0cc639e]
+- Updated dependencies [431fd6e]
+- Updated dependencies [8422004]
+- Updated dependencies [6517e43]
+  - @shopify/cli-kit@3.80.0
+
+## 3.79.0
+
+### Patch Changes
+
+- aa85a63: Bump theme-tools packages
+- 164bbbe: The hidden `.shopify` folder now has its own generic .gitignore file
+- d8f017d: Bump theme check & language libraries
+- d9c7b4c: Fix: Clear asset upload error overlay for deleted / renamed files
+- 4134504: Add the actual "errors" during theme upload to the JSON output from `shopify theme push --json`
+- Updated dependencies [f9ac5cf]
+- Updated dependencies [0b1e588]
+- Updated dependencies [94362f9]
+- Updated dependencies [4f17786]
+- Updated dependencies [036bcaf]
+- Updated dependencies [164bbbe]
+- Updated dependencies [68b53f6]
+- Updated dependencies [031feb7]
+  - @shopify/cli-kit@3.79.0
+
+## 3.78.0
+
+### Minor Changes
+
+- a50cc5e: Update 'shopify theme check'
+
+### Patch Changes
+
+- 5c18310: Fix requests to Section Rendering API that contain the same search param name multiple times (e.g. multiple filters for "size").
+- 3ec5649: Fixed an issue where CLI would not apply the SHOPIFY_FLAG_ENVIRONMENT flag
+  - @shopify/cli-kit@3.78.0
+
+## 3.77.0
+
+### Patch Changes
+
+- dbde56d: [BugFix] CLI can't force fetch metafields when run by language-server
+- 9f3c958: Bump `theme-check` packages
+- 0d1d9ce: Fix masking 404 errors as 200 when using Section Rendering API.
+- 4f7dcf7: Bump Shopify/theme-tools packages
+- 1163bb1: [internal] Remove unused metafield definition ownerType
+- f3f66ef: Update `theme info` command to support multiple environments
+  EX: `theme info -e env1 -e env2`
+- Updated dependencies [73c78ac]
+- Updated dependencies [36dccd6]
+  - @shopify/cli-kit@3.77.0
+
+## 3.76.0
+
+### Minor Changes
+
+- fca9c19: Render error overlay when `theme dev` encounters asset upload errors. A 500 status code is returned when the error overlay is rendered.
+
+### Patch Changes
+
+- 0b515f3: Fix 401 and 405 errors when rendering certain routes.
+- fa2fa08: Improve `shopify theme dev` to recover the session when theme ID mismatch errors happen
+- d361f3a: Fixed `shopify theme dev` to avoid emitting full page reload events when files are updated successfully, preventing conflicts with hot-reloading.
+- Updated dependencies [4a3895c]
+- Updated dependencies [38e8d7b]
+- Updated dependencies [b1ed29d]
+- Updated dependencies [6449aa6]
+  - @shopify/cli-kit@3.76.0
+
+## 3.75.0
+
+### Patch Changes
+
+- da606a6: Improve mechanism that adds `.shopify` to `.gitignore` to avoid duplicate entries
+- f3498c3: Fix the local dev proxy for `/checkouts` and `/accounts/logout` to avoid 401 and 403 errors.
+- 88ba848: Update `shopify theme push -x` documentation (it uploads, doesn't download)
+- Updated dependencies [da606a6]
+- Updated dependencies [4aee075]
+- Updated dependencies [ab407f3]
+  - @shopify/cli-kit@3.75.0
+
+## 3.74.0
+
+### Minor Changes
+
+- b7cda8c890: Add `theme profile` command which allows users to get a performance profile for Liquid rendering on a given page
+- 1b8ad07153: Give theme info a facelift using standard UI components
+- 6380277a7a: Unify how asset upload errors are reported in the `theme dev` command
+
+### Patch Changes
+
+- 7e34195c30: Store theme asset upload errors encountered while running the theme dev command
+- 1a5aec270d: Fix `shopify theme dev` to no longer fail when development themes expire in internationalized stores
+- 404fa77c90: When the `.shopify/metafields.json` file gets created, the CLI now proposes to add it to `.gitignore` by default
+- 5be14a5b08: Update documentation for `theme push --only`
+- f004019bb9: Utilize Admin API to determine if a storefront is password protected
+- Updated dependencies [7e34195c30]
+- Updated dependencies [1a5aec270d]
+- Updated dependencies [bb3b100731]
+- Updated dependencies [369351435b]
+- Updated dependencies [f004019bb9]
+  - @shopify/cli-kit@3.74.0
+
+## 3.73.0
+
+### Minor Changes
+
+- beab713acd: Developers can now use the `shopify theme metafields pull` command to download metafields, which can then be used for more refined code completion.
+
+### Patch Changes
+
+- 9d47c0f5f2: Support theme blocks in the `theme package` command
+- a92307dce8: Bump Shopify/theme-tools packages
+- df9d347d73: [Bug Fix] Reduce theme upload batch size to prevent timeout
+- 4d722c64fc: Ensure git directory is clean when running `theme pull`
+- Updated dependencies [beab713acd]
+- Updated dependencies [4d722c64fc]
+- Updated dependencies [03fb93e3c9]
+  - @shopify/cli-kit@3.73.0
 
 ## 3.72.0
 

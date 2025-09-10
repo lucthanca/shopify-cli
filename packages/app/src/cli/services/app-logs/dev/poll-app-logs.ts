@@ -4,7 +4,6 @@ import {
   POLLING_ERROR_RETRY_INTERVAL_MS,
   ONE_MILLION,
   LOG_TYPE_FUNCTION_RUN,
-  fetchAppLogs,
   LOG_TYPE_FUNCTION_NETWORK_ACCESS,
   LOG_TYPE_RESPONSE_FROM_CACHE,
   LOG_TYPE_REQUEST_EXECUTION_IN_BACKGROUND,
@@ -12,8 +11,10 @@ import {
   REQUEST_EXECUTION_IN_BACKGROUND_NO_CACHED_RESPONSE_REASON,
   REQUEST_EXECUTION_IN_BACKGROUND_CACHE_ABOUT_TO_EXPIRE_REASON,
   handleFetchAppLogsError,
+  AppLogsOptions,
 } from '../utils.js'
-import {AppLogData, ErrorResponse, FunctionRunLog} from '../types.js'
+import {AppLogData, FunctionRunLog} from '../types.js'
+import {AppLogsError, AppLogsSuccess, DeveloperPlatformClient} from '../../../utilities/developer-platform-client.js'
 import {outputContent, outputDebug, outputToken, outputWarn} from '@shopify/cli-kit/node/output'
 import {useConcurrentOutputContext} from '@shopify/cli-kit/node/ui/components'
 import camelcaseKeys from 'camelcase-keys'
@@ -23,58 +24,34 @@ export const pollAppLogs = async ({
   stdout,
   appLogsFetchInput: {jwtToken, cursor},
   apiKey,
+  developerPlatformClient,
   resubscribeCallback,
   storeName,
+  organizationId,
+  abortSignal,
 }: {
   stdout: Writable
-  appLogsFetchInput: {jwtToken: string; cursor?: string}
+  appLogsFetchInput: AppLogsOptions
   apiKey: string
+  developerPlatformClient: DeveloperPlatformClient
   resubscribeCallback: () => Promise<string>
   storeName: string
+  organizationId: string
+  abortSignal?: AbortSignal
 }) => {
+  if (abortSignal?.aborted) {
+    return
+  }
+
   try {
     let nextJwtToken = jwtToken
     let retryIntervalMs = POLLING_INTERVAL_MS
 
-    const httpResponse = await fetchAppLogs(jwtToken, cursor)
+    const response = await developerPlatformClient.appLogs({jwtToken, cursor}, organizationId)
 
-    const response = await httpResponse.json()
-    const {errors} = response as {errors: string[]}
-
-    if (errors) {
-      const errorResponse = {
-        errors: errors.map((error) => ({message: error, status: httpResponse.status})),
-      } as ErrorResponse
-
-      const result = await handleFetchAppLogsError({
-        response: errorResponse,
-        onThrottle: (retryIntervalMs) => {
-          outputWarn(`Request throttled while polling app logs.`)
-          outputWarn(`Retrying in ${retryIntervalMs / 1000} seconds.`)
-        },
-        onUnknownError: (retryIntervalMs) => {
-          outputWarn(`Error while polling app logs.`)
-          outputWarn(`Retrying in ${retryIntervalMs / 1000} seconds.`)
-        },
-        onResubscribe: () => {
-          return resubscribeCallback()
-        },
-      })
-
-      if (result.nextJwtToken) {
-        nextJwtToken = result.nextJwtToken
-      }
-      retryIntervalMs = result.retryIntervalMs
-    }
-
-    const data = response as {
-      app_logs?: AppLogData[]
-      cursor?: string
-      errors?: string[]
-    }
-
-    if (data.app_logs) {
-      const {app_logs: appLogs} = data
+    const {errors, status} = response as AppLogsError
+    if (status === 200) {
+      const {app_logs: appLogs} = response as AppLogsSuccess
 
       for (const log of appLogs) {
         let payload = JSON.parse(log.payload)
@@ -105,28 +82,55 @@ export const pollAppLogs = async ({
           )
         })
       }
+    } else {
+      const errorResponse = {
+        errors: errors.map((error) => ({message: error, status})),
+      }
+
+      const result = await handleFetchAppLogsError({
+        response: errorResponse,
+        onThrottle: (retryIntervalMs) => {
+          outputWarn(`Request throttled while polling app logs.`, stdout)
+          outputWarn(`Retrying in ${retryIntervalMs / 1000} seconds.`, stdout)
+        },
+        onUnknownError: (retryIntervalMs) => {
+          outputWarn(`Error while polling app logs.`, stdout)
+          outputWarn(`Retrying in ${retryIntervalMs / 1000} seconds.`, stdout)
+        },
+        onResubscribe: () => {
+          return resubscribeCallback()
+        },
+      })
+
+      if (result.nextJwtToken) {
+        nextJwtToken = result.nextJwtToken
+      }
+      retryIntervalMs = result.retryIntervalMs
     }
 
-    const cursorFromResponse = data?.cursor
+    const {cursor: responseCursor} = response as AppLogsSuccess
 
     setTimeout(() => {
       pollAppLogs({
         stdout,
         appLogsFetchInput: {
           jwtToken: nextJwtToken,
-          cursor: cursorFromResponse || cursor,
+          cursor: responseCursor || cursor,
         },
         apiKey,
+        developerPlatformClient,
         resubscribeCallback,
         storeName,
+        organizationId,
+        abortSignal,
       }).catch((error) => {
         outputDebug(`Unexpected error during polling: ${error}}\n`)
       })
     }, retryIntervalMs)
     // eslint-disable-next-line no-catch-all/no-catch-all
   } catch (error) {
-    outputWarn(`Error while polling app logs.`)
-    outputWarn(`Retrying in ${POLLING_ERROR_RETRY_INTERVAL_MS / 1000} seconds.`)
+    outputWarn(`Error while polling app logs.`, stdout)
+    outputWarn(`Retrying in ${POLLING_ERROR_RETRY_INTERVAL_MS / 1000} seconds.`, stdout)
     outputDebug(`${error as string}}\n`)
 
     setTimeout(() => {
@@ -137,8 +141,11 @@ export const pollAppLogs = async ({
           cursor: undefined,
         },
         apiKey,
+        developerPlatformClient,
         resubscribeCallback,
         storeName,
+        organizationId,
+        abortSignal,
       }).catch((error) => {
         outputDebug(`Unexpected error during polling: ${error}}\n`)
       })

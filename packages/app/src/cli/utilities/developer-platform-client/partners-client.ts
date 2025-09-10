@@ -7,10 +7,12 @@ import {
   AppVersionIdentifiers,
   DeveloperPlatformClient,
   Paginateable,
-  DevSessionOptions,
   filterDisabledFlags,
   ClientName,
   AppVersionWithContext,
+  CreateAppOptions,
+  AppLogsResponse,
+  createUnauthorizedHandler,
 } from '../developer-platform-client.js'
 import {fetchCurrentAccountInformation, PartnersSession} from '../../../cli/services/context/partner-account-info.js'
 import {
@@ -97,7 +99,7 @@ import {
   RemoteTemplateSpecificationsSchema,
   RemoteTemplateSpecificationsVariables,
 } from '../../api/graphql/template_specifications.js'
-import {ExtensionTemplate} from '../../models/app/template.js'
+import {ExtensionTemplatesResult} from '../../models/app/template.js'
 import {
   TargetSchemaDefinitionQuerySchema,
   TargetSchemaDefinitionQuery,
@@ -127,11 +129,7 @@ import {
   MigrateAppModuleSchema,
   MigrateAppModuleVariables,
 } from '../../api/graphql/extension_migrate_app_module.js'
-import {
-  AppLogsSubscribeVariables,
-  AppLogsSubscribeMutation,
-  AppLogsSubscribeResponse,
-} from '../../api/graphql/subscribe_to_app_logs.js'
+import {AppLogsSubscribeMutation, AppLogsSubscribeResponse} from '../../api/graphql/subscribe_to_app_logs.js'
 
 import {AllOrgs} from '../../api/graphql/partners/generated/all-orgs.js'
 import {
@@ -153,13 +151,19 @@ import {
 } from '../../api/graphql/partners/generated/dev-stores-by-org.js'
 import {SchemaDefinitionByTargetQueryVariables} from '../../api/graphql/functions/generated/schema-definition-by-target.js'
 import {SchemaDefinitionByApiTypeQueryVariables} from '../../api/graphql/functions/generated/schema-definition-by-api-type.js'
+import {AppLogData} from '../../services/app-logs/types.js'
+import {AppLogsOptions} from '../../services/app-logs/utils.js'
+import {AppLogsSubscribeMutationVariables} from '../../api/graphql/app-management/generated/app-logs-subscribe.js'
 import {TypedDocumentNode} from '@graphql-typed-document-node/core'
 import {isUnitTest} from '@shopify/cli-kit/node/context/local'
 import {AbortError} from '@shopify/cli-kit/node/error'
-import {partnersRequest, partnersRequestDoc} from '@shopify/cli-kit/node/api/partners'
-import {GraphQLVariables} from '@shopify/cli-kit/node/api/graphql'
+import {generateFetchAppLogUrl, partnersRequest, partnersRequestDoc} from '@shopify/cli-kit/node/api/partners'
+import {CacheOptions, GraphQLVariables, UnauthorizedHandler} from '@shopify/cli-kit/node/api/graphql'
 import {ensureAuthenticatedPartners} from '@shopify/cli-kit/node/session'
 import {partnersFqdn} from '@shopify/cli-kit/node/context/fqdn'
+import {TokenItem} from '@shopify/cli-kit/node/ui'
+import {RequestModeInput, Response, shopifyFetch} from '@shopify/cli-kit/node/http'
+import {CLI_KIT_VERSION} from '@shopify/cli-kit/common/version'
 
 // this is a temporary solution for editions to support https://vault.shopify.io/gsd/projects/31406
 // read more here: https://vault.shopify.io/gsd/projects/31406
@@ -210,8 +214,11 @@ export class PartnersClient implements DeveloperPlatformClient {
   public readonly clientName = ClientName.Partners
   public readonly webUiName = 'Partner Dashboard'
   public readonly supportsAtomicDeployments = false
-  public readonly requiresOrganization = false
   public readonly supportsDevSessions = false
+  public readonly supportsStoreSearch = false
+  public readonly organizationSource = OrganizationSource.Partners
+  public readonly bundleFormat = 'zip'
+  public readonly supportsDashboardManagedExtensions = true
   private _session: PartnersSession | undefined
 
   constructor(session?: PartnersSession) {
@@ -226,32 +233,45 @@ export class PartnersClient implements DeveloperPlatformClient {
       const {token, userId} = await ensureAuthenticatedPartners()
       this._session = {
         token,
+        businessPlatformToken: '',
         accountInfo: {type: 'UnknownAccount'},
         userId,
       }
       const accountInfo = await fetchCurrentAccountInformation(this, userId)
-      this._session = {token, accountInfo, userId}
+      this._session = {token, businessPlatformToken: '', accountInfo, userId}
     }
     return this._session
   }
 
-  async request<T>(query: string, variables: GraphQLVariables | undefined = undefined): Promise<T> {
-    return partnersRequest(query, await this.token(), variables)
+  async request<T>(
+    query: string,
+    variables: GraphQLVariables | undefined = undefined,
+    cacheOptions?: CacheOptions,
+    preferredBehaviour?: RequestModeInput,
+  ): Promise<T> {
+    return partnersRequest(
+      query,
+      await this.token(),
+      variables,
+      cacheOptions,
+      preferredBehaviour,
+      this.createUnauthorizedHandler(),
+    )
   }
 
   async requestDoc<TResult, TVariables extends {[key: string]: unknown}>(
     document: TypedDocumentNode<TResult, TVariables>,
     variables?: TVariables,
   ): Promise<TResult> {
-    return partnersRequestDoc(document, await this.token(), variables)
+    return partnersRequestDoc(document, await this.token(), variables, undefined, this.createUnauthorizedHandler())
   }
 
   async token(): Promise<string> {
     return (await this.session()).token
   }
 
-  async refreshToken(): Promise<string> {
-    const {token} = await ensureAuthenticatedPartners([], process.env, {noPrompt: true})
+  async unsafeRefreshToken(): Promise<string> {
+    const {token} = await ensureAuthenticatedPartners([], process.env, {noPrompt: true, forceRefresh: true})
     const session = await this.session()
     if (token) {
       session.token = token
@@ -263,7 +283,7 @@ export class PartnersClient implements DeveloperPlatformClient {
     return (await this.session()).accountInfo
   }
 
-  async appFromId({apiKey}: MinimalAppIdentifiers): Promise<OrganizationApp | undefined> {
+  async appFromIdentifiers(apiKey: string): Promise<OrganizationApp | undefined> {
     const variables: FindAppQueryVariables = {apiKey}
     const res: FindAppQuerySchema = await this.request(FindAppQuery, variables)
     const app = res.app
@@ -282,8 +302,8 @@ export class PartnersClient implements DeveloperPlatformClient {
       const result = await this.requestDoc(AllOrgs)
       return result.organizations.nodes!.map((org) => ({
         id: org!.id,
-        businessName: org!.businessName,
-        source: OrganizationSource.Partners,
+        businessName: `${org!.businessName} (Partner Dashboard)`,
+        source: this.organizationSource,
       }))
     } catch (error: unknown) {
       if ((error as {statusCode?: number}).statusCode === 404) {
@@ -296,10 +316,11 @@ export class PartnersClient implements DeveloperPlatformClient {
 
   async orgFromId(orgId: string): Promise<Organization | undefined> {
     const variables: FindOrganizationBasicVariables = {id: orgId}
-    const result: FindOrganizationBasicQuerySchema = await this.request(FindOrganizationBasicQuery, variables)
-    const org: Organization | undefined = result.organizations.nodes[0]
-    if (org) org.source = OrganizationSource.Partners
-    return org
+    const result: FindOrganizationBasicQuerySchema = await this.request(FindOrganizationBasicQuery, variables, {
+      cacheTTL: {hours: 6},
+    })
+    const org: Omit<Organization, 'source'> | undefined = result.organizations.nodes[0]
+    return org ? {...org, source: this.organizationSource} : undefined
   }
 
   async orgAndApps(orgId: string): Promise<Paginateable<{organization: Organization; apps: MinimalOrganizationApp[]}>> {
@@ -320,33 +341,50 @@ export class PartnersClient implements DeveloperPlatformClient {
   }
 
   async specifications({apiKey}: MinimalAppIdentifiers): Promise<RemoteSpecification[]> {
-    const variables: ExtensionSpecificationsQueryVariables = {api_key: apiKey}
+    const variables: ExtensionSpecificationsQueryVariables = {apiKey}
     const result: ExtensionSpecificationsQuerySchema = await this.request(ExtensionSpecificationsQuery, variables)
-    return result.extensionSpecifications
+    // Partners client does not support isClientProvided. Safe to assume that all modules are extension-style.
+    return result.extensionSpecifications.map((spec) => ({
+      ...spec,
+      options: {
+        ...spec.options,
+        uidIsClientProvided: true,
+      },
+    }))
   }
 
-  async templateSpecifications({apiKey}: MinimalAppIdentifiers): Promise<ExtensionTemplate[]> {
+  async templateSpecifications({apiKey}: MinimalAppIdentifiers): Promise<ExtensionTemplatesResult> {
     const variables: RemoteTemplateSpecificationsVariables = {apiKey}
     const result: RemoteTemplateSpecificationsSchema = await this.request(RemoteTemplateSpecificationsQuery, variables)
-    return result.templateSpecifications.map((template) => {
+    const templates = result.templateSpecifications.map((template) => {
       const {types, ...rest} = template
       return {
         ...rest,
         ...types[0],
       }
     })
+
+    let counter = 0
+    const templatesWithPriority = templates.map((template) => ({
+      ...template,
+      sortPriority: template.sortPriority ?? counter++,
+    }))
+
+    const groupOrder: string[] = []
+    for (const template of templatesWithPriority) {
+      if (template.group && !groupOrder.includes(template.group)) {
+        groupOrder.push(template.group)
+      }
+    }
+
+    return {
+      templates: templatesWithPriority,
+      groupOrder,
+    }
   }
 
-  async createApp(
-    org: Organization,
-    name: string,
-    options?: {
-      isLaunchable?: boolean
-      scopesArray?: string[]
-      directory?: string
-    },
-  ): Promise<OrganizationApp> {
-    const variables: CreateAppQueryVariables = getAppVars(org, name, options?.isLaunchable, options?.scopesArray)
+  async createApp(org: Organization, options: CreateAppOptions): Promise<OrganizationApp> {
+    const variables: CreateAppQueryVariables = getAppVars(org, options.name, options.isLaunchable, options.scopesArray)
     const result: CreateAppQuerySchema = await this.request(CreateAppQuery, variables)
     if (result.appCreate.userErrors.length > 0) {
       const errors = result.appCreate.userErrors.map((error) => error.message).join(', ')
@@ -357,10 +395,13 @@ export class PartnersClient implements DeveloperPlatformClient {
     return {...result.appCreate.app, organizationId: org.id, newApp: true, flags, developerPlatformClient: this}
   }
 
-  async devStoresForOrg(orgId: string): Promise<OrganizationStore[]> {
+  async devStoresForOrg(orgId: string): Promise<Paginateable<{stores: OrganizationStore[]}>> {
     const variables: DevStoresByOrgQueryVariables = {id: orgId}
     const result: DevStoresByOrgQuery = await this.requestDoc(DevStoresByOrg, variables)
-    return result.organizations.nodes![0]!.stores.nodes as OrganizationStore[]
+    return {
+      stores: result.organizations.nodes![0]!.stores.nodes as OrganizationStore[],
+      hasMorePages: false,
+    }
   }
 
   async appExtensionRegistrations(
@@ -430,7 +471,7 @@ export class PartnersClient implements DeveloperPlatformClient {
       const {uid, ...otherFields} = element
       return otherFields
     })
-    return this.request(AppDeploy, variables)
+    return this.request(AppDeploy, variables, undefined, 'slow-request')
   }
 
   async release({
@@ -459,9 +500,22 @@ export class PartnersClient implements DeveloperPlatformClient {
     return this.request(ConvertDevToTransferDisabledStoreQuery, input)
   }
 
-  async storeByDomain(orgId: string, shopDomain: string): Promise<FindStoreByDomainSchema> {
+  async storeByDomain(orgId: string, shopDomain: string): Promise<OrganizationStore | undefined> {
     const variables: FindStoreByDomainQueryVariables = {orgId, shopDomain}
-    return this.request(FindStoreByDomainQuery, variables)
+    const result: FindStoreByDomainSchema = await this.request(FindStoreByDomainQuery, variables)
+
+    const node = result.organizations.nodes[0]?.stores.nodes[0]
+    if (!node) {
+      return undefined
+    }
+    return {
+      ...node,
+      provisionable: false,
+    }
+  }
+
+  async ensureUserAccessToStore(_orgId: string, _store: OrganizationStore): Promise<void> {
+    // This is a no-op for partners
   }
 
   async updateDeveloperPreview(
@@ -509,7 +563,6 @@ export class PartnersClient implements DeveloperPlatformClient {
     input: SchemaDefinitionByTargetQueryVariables,
     apiKey: string,
     _organizationId: string,
-    _appId?: string,
   ): Promise<string | null> {
     // Ensures compatibility with existing partners requests
     // Can remove once migrated to AMF
@@ -547,7 +600,10 @@ export class PartnersClient implements DeveloperPlatformClient {
     return input.toUpperCase()
   }
 
-  async subscribeToAppLogs(input: AppLogsSubscribeVariables): Promise<AppLogsSubscribeResponse> {
+  async subscribeToAppLogs(
+    input: AppLogsSubscribeMutationVariables,
+    _organizationId: string,
+  ): Promise<AppLogsSubscribeResponse> {
     return this.request(AppLogsSubscribeMutation, input)
   }
 
@@ -555,12 +611,43 @@ export class PartnersClient implements DeveloperPlatformClient {
     return `https://${await partnersFqdn()}/${organizationId}/apps/${id}`
   }
 
-  async devSessionCreate(_input: DevSessionOptions): Promise<never> {
+  async appLogs(options: AppLogsOptions, _organizationId: string): Promise<AppLogsResponse> {
+    const response = await fetchAppLogs(options)
+
+    try {
+      const data = (await response.json()) as {
+        app_logs?: AppLogData[]
+        cursor?: string
+        errors?: string[]
+      }
+
+      if (!response.ok) {
+        return {
+          errors: data.errors || [`Request failed with status ${response.status}`],
+          status: response.status,
+        }
+      }
+
+      return {
+        app_logs: data.app_logs || [],
+        cursor: data.cursor,
+        status: response.status,
+      }
+      // eslint-disable-next-line no-catch-all/no-catch-all
+    } catch (error) {
+      return {
+        errors: [`Failed to parse response: ${error}`],
+        status: response.status,
+      }
+    }
+  }
+
+  async devSessionCreate(_input: unknown): Promise<never> {
     // Dev Sessions are not supported in partners client.
     throw new Error('Unsupported operation')
   }
 
-  async devSessionUpdate(_input: DevSessionOptions): Promise<never> {
+  async devSessionUpdate(_input: unknown): Promise<never> {
     // Dev Sessions are not supported in partners client.
     throw new Error('Unsupported operation')
   }
@@ -571,12 +658,12 @@ export class PartnersClient implements DeveloperPlatformClient {
     return Promise.resolve()
   }
 
-  async getCreateDevStoreLink(orgId: string): Promise<string> {
-    const url = `https://${await partnersFqdn()}/dashboard/${orgId}/stores`
-    return (
-      `Looks like you don't have a dev store in the Partners org you selected. ` +
-      `Keep going — create a dev store on Shopify Partners:\n${url}\n`
-    )
+  async getCreateDevStoreLink(org: Organization): Promise<TokenItem> {
+    const url = `https://${await partnersFqdn()}/${org.id}/stores`
+    return [
+      `Looks like you don't have any dev stores associated with ${org.businessName}'s Partner Dashboard.`,
+      {link: {url, label: 'Create one now'}},
+    ]
   }
 
   private async fetchOrgAndApps(orgId: string, title?: string): Promise<OrgAndAppsResponse> {
@@ -588,8 +675,29 @@ export class PartnersClient implements DeveloperPlatformClient {
       const partnersSession = await this.session()
       throw new NoOrgError(partnersSession.accountInfo, orgId)
     }
-    const parsedOrg = {id: org.id, businessName: org.businessName, source: OrganizationSource.Partners}
+    const parsedOrg = {id: org.id, businessName: org.businessName, source: this.organizationSource}
     const appsWithOrg = org.apps.nodes.map((app) => ({...app, organizationId: org.id}))
     return {organization: parsedOrg, apps: {...org.apps, nodes: appsWithOrg}, stores: []}
   }
+
+  private createUnauthorizedHandler(): UnauthorizedHandler {
+    return createUnauthorizedHandler(this)
+  }
+}
+
+const fetchAppLogs = async ({jwtToken, cursor, filters}: AppLogsOptions): Promise<Response> => {
+  const url = await generateFetchAppLogUrl(cursor, filters)
+  const userAgent = `Shopify CLI; v=${CLI_KIT_VERSION}`
+  const headers = {
+    Authorization: `Bearer ${jwtToken}`,
+    'User-Agent': userAgent,
+  }
+  return shopifyFetch(
+    url,
+    {
+      method: 'GET',
+      headers,
+    },
+    'non-blocking',
+  )
 }

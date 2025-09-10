@@ -2,6 +2,7 @@ import {calculateChecksum} from './asset-checksum.js'
 import {applyIgnoreFilters, getPatternsFromShopifyIgnore} from './asset-ignore.js'
 import {Notifier} from './notifier.js'
 import {createSyncingCatchError} from './errors.js'
+import {triggerBrowserFullReload} from './theme-environment/hot-reload/server.js'
 import {DEFAULT_IGNORE_PATTERNS, timestampDateFormat} from '../constants.js'
 import {glob, readFile, ReadOptions, fileExists, mkdir, writeFile, removeFile} from '@shopify/cli-kit/node/fs'
 import {joinPath, basename, relativePath} from '@shopify/cli-kit/node/path'
@@ -9,8 +10,9 @@ import {lookupMimeType, setMimeTypes} from '@shopify/cli-kit/node/mimes'
 import {outputContent, outputDebug, outputInfo, outputToken, outputWarn} from '@shopify/cli-kit/node/output'
 import {buildThemeAsset} from '@shopify/cli-kit/node/themes/factories'
 import {AdminSession} from '@shopify/cli-kit/node/session'
-import {bulkUploadThemeAssets, deleteThemeAsset} from '@shopify/cli-kit/node/themes/api'
+import {bulkUploadThemeAssets, deleteThemeAssets} from '@shopify/cli-kit/node/themes/api'
 import EventEmitter from 'node:events'
+import {fileURLToPath} from 'node:url'
 import type {
   ThemeFileSystem,
   ThemeFileSystemOptions,
@@ -33,6 +35,7 @@ const THEME_DIRECTORY_PATTERNS = [
 ]
 
 const THEME_PARTITION_REGEX = {
+  layoutLiquidRegex: /^layout\/.+\.liquid$/,
   sectionLiquidRegex: /^sections\/.+\.liquid$/,
   blockLiquidRegex: /^blocks\/.+\.liquid$/,
   configRegex: /^config\/(settings_schema|settings_data)\.json$/,
@@ -45,6 +48,7 @@ const THEME_PARTITION_REGEX = {
 
 export function mountThemeFileSystem(root: string, options?: ThemeFileSystemOptions): ThemeFileSystem {
   const files = new Map<string, ThemeAsset>()
+  const uploadErrors = new Map<string, string[]>()
   const unsyncedFileKeys = new Set<string>()
   const filterPatterns = {
     ignoreFromFile: [] as string[],
@@ -93,6 +97,13 @@ export function mountThemeFileSystem(root: string, options?: ThemeFileSystemOpti
     adminSession: AdminSession,
     filePath: string,
   ) {
+    if (process.env.SHOPIFY_CLI_LOCAL_HOT_RELOAD && filePath === inferLocalHotReloadScriptPath()) {
+      // Trigger a full browser when the local hot reload logic changes.
+      // This only happens during local Shopifolk development.
+      triggerBrowserFullReload(themeId, filePath)
+      return
+    }
+
     const fileKey = getKey(filePath)
 
     notifyFileChange(fileKey)
@@ -102,7 +113,7 @@ export function mountThemeFileSystem(root: string, options?: ThemeFileSystemOpti
           case 'change':
             return handleFileUpdate(eventName, themeId, adminSession, fileKey)
           case 'unlink':
-            return handleFileDelete(themeId, adminSession, fileKey)
+            return handleFileDelete(themeId, adminSession, fileKey, uploadErrors)
         }
       })
       .catch((error) => {
@@ -128,7 +139,7 @@ export function mountThemeFileSystem(root: string, options?: ThemeFileSystemOpti
       const file = files.get(fileKey)
 
       if (!file) {
-        return ''
+        return
       }
 
       if (file.checksum !== previousChecksum) {
@@ -136,29 +147,19 @@ export function mountThemeFileSystem(root: string, options?: ThemeFileSystemOpti
         unsyncedFileKeys.add(fileKey)
       }
 
-      // file.value has a fallback value of '', so we want to ignore this eslint rule
-      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-      return file.value || file.attachment || ''
+      return {
+        // file.value has a fallback value of '', so we want to ignore this eslint rule
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+        value: file.value || undefined,
+        attachment: file.attachment,
+      }
     })
 
     const syncPromise = contentPromise
-      .then(async (content) => {
-        if (!unsyncedFileKeys.has(fileKey)) return false
+      .then((content) => {
+        if (!content) return
 
-        const [result] = await bulkUploadThemeAssets(Number(themeId), [{key: fileKey, value: content}], adminSession)
-
-        if (!result?.success) {
-          throw new Error(
-            result?.errors?.asset
-              ? `\n\n${result.errors.asset.map((error) => `- ${error}`).join('\n')}`
-              : 'Response was not successful.',
-          )
-        }
-
-        unsyncedFileKeys.delete(fileKey)
-        outputSyncResult('update', fileKey)
-
-        return true
+        return handleSyncUpdate(unsyncedFileKeys, uploadErrors, fileKey, themeId, adminSession)(content)
       })
       .catch(createSyncingCatchError(fileKey, 'upload'))
 
@@ -168,32 +169,39 @@ export function mountThemeFileSystem(root: string, options?: ThemeFileSystemOpti
         contentPromise
           .then((content) => {
             // Run only if content has changed
-            if (unsyncedFileKeys.has(fileKey)) fn(content)
+            if (unsyncedFileKeys.has(fileKey)) fn(content?.value ?? content?.attachment ?? '')
           })
           .catch(() => {})
       },
-      onSync: (fn) => {
+      onSync: (onSuccess, onError) => {
         syncPromise
           .then((didSync) => {
-            if (didSync) fn()
+            if (didSync) onSuccess()
+            else onError?.()
           })
           .catch(() => {})
       },
     })
   }
 
-  const handleFileDelete = (themeId: string, adminSession: AdminSession, fileKey: string) => {
+  const handleFileDelete = (
+    themeId: string,
+    adminSession: AdminSession,
+    fileKey: string,
+    uploadErrors: Map<string, string[]>,
+  ) => {
     if (isFileIgnored(fileKey)) return
 
     // Optimistically delete the file from the local file system.
+    uploadErrors.delete(fileKey)
     files.delete(fileKey)
     unsyncedFileKeys.add(fileKey)
 
     const syncPromise = options?.noDelete
       ? Promise.resolve()
-      : deleteThemeAsset(Number(themeId), fileKey, adminSession)
-          .then(async (success) => {
-            if (!success) throw new Error(`Failed to delete file "${fileKey}" from remote theme.`)
+      : deleteThemeAssets(Number(themeId), [fileKey], adminSession)
+          .then(async (results) => {
+            if (!results[0]?.success) throw new Error(`Failed to delete file "${fileKey}" from remote theme.`)
             unsyncedFileKeys.delete(fileKey)
             outputSyncResult('delete', fileKey)
             return true
@@ -219,10 +227,16 @@ export function mountThemeFileSystem(root: string, options?: ThemeFileSystemOpti
     THEME_DIRECTORY_PATTERNS.map((pattern) => joinPath(root, pattern.split('/').shift() ?? '')),
   )
 
+  if (process.env.SHOPIFY_CLI_LOCAL_HOT_RELOAD) {
+    // Watch the local hot reload script to trigger full browser reloads on change.
+    directoriesToWatch.add(inferLocalHotReloadScriptPath())
+  }
+
   return {
     root,
     files,
     unsyncedFileKeys,
+    uploadErrors,
     ready: () => themeSetupPromise,
     delete: async (fileKey: string) => {
       files.delete(fileKey)
@@ -259,6 +273,40 @@ export function mountThemeFileSystem(root: string, options?: ThemeFileSystemOpti
         .on('change', handleFsEvent.bind(null, 'change', themeId, adminSession))
         .on('unlink', handleFsEvent.bind(null, 'unlink', themeId, adminSession))
     },
+  }
+}
+
+export function handleSyncUpdate(
+  unsyncedFileKeys: Set<string>,
+  uploadErrors: Map<string, string[]>,
+  fileKey: string,
+  themeId: string,
+  adminSession: AdminSession,
+): (content: {value?: string; attachment?: string}) => PromiseLike<boolean> {
+  return async (content) => {
+    if (!unsyncedFileKeys.has(fileKey)) {
+      return false
+    }
+
+    const [result] = await bulkUploadThemeAssets(Number(themeId), [{key: fileKey, ...content}], adminSession)
+
+    if (!result?.success) {
+      const errors = result?.errors?.asset ?? ['Response was not successful.']
+
+      uploadErrors.set(fileKey, errors)
+      triggerBrowserFullReload(themeId, fileKey)
+
+      throw new Error(errors.join('\n'))
+    }
+
+    if (uploadErrors.delete(fileKey)) {
+      triggerBrowserFullReload(themeId, fileKey)
+    }
+
+    unsyncedFileKeys.delete(fileKey)
+    outputSyncResult('update', fileKey)
+
+    return true
   }
 }
 
@@ -319,6 +367,7 @@ export function partitionThemeFiles<T extends {key: string}>(files: T[]) {
   const configFiles: T[] = []
   const staticAssetFiles: T[] = []
   const blockLiquidFiles: T[] = []
+  const layoutFiles: T[] = []
 
   files.forEach((file) => {
     const fileKey = file.key
@@ -327,6 +376,8 @@ export function partitionThemeFiles<T extends {key: string}>(files: T[]) {
         sectionLiquidFiles.push(file)
       } else if (THEME_PARTITION_REGEX.blockLiquidRegex.test(fileKey)) {
         blockLiquidFiles.push(file)
+      } else if (THEME_PARTITION_REGEX.layoutLiquidRegex.test(fileKey)) {
+        layoutFiles.push(file)
       } else {
         otherLiquidFiles.push(file)
       }
@@ -357,6 +408,7 @@ export function partitionThemeFiles<T extends {key: string}>(files: T[]) {
     configFiles,
     staticAssetFiles,
     blockLiquidFiles,
+    layoutFiles,
   }
 }
 
@@ -414,4 +466,11 @@ function outputSyncResult(action: 'update' | 'delete', fileKey: string): void {
   outputInfo(
     outputContent`• ${timestampDateFormat.format(new Date())}  Synced ${outputToken.raw('»')} ${action} ${fileKey}`,
   )
+}
+
+export function inferLocalHotReloadScriptPath() {
+  const envVar = process.env.SHOPIFY_CLI_LOCAL_HOT_RELOAD
+  return !envVar || envVar === 'true'
+    ? joinPath(fileURLToPath(import.meta.url.split('/cli/')[0] ?? ''), 'theme-hot-reload/dist/theme-hot-reload.js')
+    : envVar
 }

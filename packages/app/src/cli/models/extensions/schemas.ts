@@ -1,11 +1,12 @@
 import {zod} from '@shopify/cli-kit/node/schema'
 
 export const MAX_EXTENSION_HANDLE_LENGTH = 50
+export const MAX_UID_LENGTH = 250
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ZodSchemaType<T> = zod.ZodType<T, any, any>
 
-const MetafieldSchema = zod.object({
+export const MetafieldSchema = zod.object({
   namespace: zod.string(),
   key: zod.string(),
 })
@@ -46,6 +47,11 @@ const NewExtensionPointSchema = zod.object({
   should_render: ShouldRenderSchema.optional(),
   metafields: zod.array(MetafieldSchema).optional(),
   default_placement: zod.string().optional(),
+  urls: zod
+    .object({
+      edit: zod.string().optional(),
+    })
+    .optional(),
   capabilities: TargetCapabilitiesSchema.optional(),
   preloads: zod
     .object({
@@ -85,20 +91,23 @@ const HandleSchema = zod
   .refine((handle) => [...handle].some((char) => char !== '-'), "Handle can't be all hyphens")
 
 export const BaseSchema = zod.object({
-  name: zod.string(),
-  type: zod.string(),
+  name: zod.string().optional(),
+  type: zod.string().optional(),
   handle: HandleSchema.optional(),
   uid: zod.string().optional(),
   description: zod.string().optional(),
   api_version: ApiVersionSchema.optional(),
   extension_points: zod.any().optional(),
   capabilities: CapabilitiesSchema.optional(),
-  metafields: zod.array(MetafieldSchema).optional().default([]),
   settings: SettingsSchema.optional(),
 })
 
 export const BaseSchemaWithHandle = BaseSchema.extend({
   handle: HandleSchema,
+})
+
+export const BaseSchemaWithoutHandle = BaseSchema.omit({
+  handle: true,
 })
 
 export const UnifiedSchema = zod.object({

@@ -1,4 +1,5 @@
 import {
+  AppSchema,
   CurrentAppConfiguration,
   LegacyAppConfiguration,
   getAppScopes,
@@ -17,19 +18,24 @@ import {
   testWebhookExtensions,
   testEditorExtensionCollection,
   testAppAccessConfigExtension,
+  testAppHomeConfigExtension,
+  testAppProxyConfigExtension,
 } from './app.test-data.js'
 import {ExtensionInstance} from '../extensions/extension-instance.js'
 import {FunctionConfigType} from '../extensions/specifications/function.js'
 import {WebhooksConfig} from '../extensions/specifications/types/app_config_webhook.js'
 import {EditorExtensionCollectionType} from '../extensions/specifications/editor_extension_collection.js'
-import {describe, expect, test} from 'vitest'
-import {inTemporaryDirectory, mkdir, writeFile} from '@shopify/cli-kit/node/fs'
+import {ApplicationURLs} from '../../services/dev/urls.js'
+import {describe, expect, test, vi} from 'vitest'
+import {inTemporaryDirectory, mkdir, readFile, writeFile} from '@shopify/cli-kit/node/fs'
 import {joinPath} from '@shopify/cli-kit/node/path'
+import {AbortError} from '@shopify/cli-kit/node/error'
 
 const CORRECT_CURRENT_APP_SCHEMA: CurrentAppConfiguration = {
   path: '',
   name: 'app 1',
   client_id: '12345',
+  extension_directories: ['extensions/*'],
   webhooks: {
     api_version: '2023-04',
     privacy_compliance: {
@@ -90,6 +96,33 @@ describe('app schema validation', () => {
       delete config.client_id
 
       expect(isCurrentAppSchema(config)).toBe(false)
+    })
+
+    test('extension_directories should be transformed to double asterisks', () => {
+      const config = {
+        ...CORRECT_CURRENT_APP_SCHEMA,
+        extension_directories: ['extensions/*'],
+      }
+      const parsed = AppSchema.parse(config)
+      expect(parsed.extension_directories).toEqual(['extensions/**'])
+    })
+
+    test('extension_directories is not transformed if it ends with double asterisks', () => {
+      const config = {
+        ...CORRECT_CURRENT_APP_SCHEMA,
+        extension_directories: ['extensions/**'],
+      }
+      const parsed = AppSchema.parse(config)
+      expect(parsed.extension_directories).toEqual(['extensions/**'])
+    })
+
+    test('extension_directories is not transformed if it doesnt end with a wildcard', () => {
+      const config = {
+        ...CORRECT_CURRENT_APP_SCHEMA,
+        extension_directories: ['extensions'],
+      }
+      const parsed = AppSchema.parse(config)
+      expect(parsed.extension_directories).toEqual(['extensions'])
     })
   })
 })
@@ -200,19 +233,259 @@ describe('getAppScopesArray', () => {
   })
 })
 
+describe('preDeployValidation', () => {
+  test('throws an error when app-specific webhooks are used with legacy install flow', async () => {
+    // Given
+    const configuration: CurrentAppConfiguration = {
+      ...DEFAULT_CONFIG,
+      access_scopes: {
+        scopes: 'read_orders',
+        use_legacy_install_flow: true,
+      },
+      webhooks: {
+        api_version: '2024-07',
+        subscriptions: [
+          {
+            topics: ['orders/create'],
+            uri: 'webhooks',
+          },
+        ],
+      },
+    }
+    const app = testApp({configuration})
+
+    // When/Then
+    await expect(app.preDeployValidation()).rejects.toThrow(
+      new AbortError(
+        'App-specific webhook subscriptions are not supported when use_legacy_install_flow is enabled.',
+        `To use app-specific webhooks, you need to:
+1. Remove 'use_legacy_install_flow = true' from your configuration
+2. Run 'shopify app deploy' to sync your scopes with the Partner Dashboard
+
+Alternatively, continue using shop-specific webhooks with the legacy install flow.
+
+Learn more: https://shopify.dev/docs/apps/build/authentication-authorization/app-installation`,
+      ),
+    )
+  })
+
+  test('does not throw an error when app-specific webhooks are used without legacy install flow', async () => {
+    // Given
+    const configuration: CurrentAppConfiguration = {
+      ...DEFAULT_CONFIG,
+      access_scopes: {
+        scopes: 'read_orders',
+        use_legacy_install_flow: false,
+      },
+      webhooks: {
+        api_version: '2024-07',
+        subscriptions: [
+          {
+            topics: ['orders/create'],
+            uri: 'webhooks',
+          },
+        ],
+      },
+    }
+    const app = testApp({configuration})
+
+    // When/Then
+    await expect(app.preDeployValidation()).resolves.not.toThrow()
+  })
+
+  test('does not throw an error when legacy install flow is enabled without app-specific webhooks', async () => {
+    // Given
+    const configuration: CurrentAppConfiguration = {
+      ...DEFAULT_CONFIG,
+      access_scopes: {
+        scopes: 'read_orders',
+        use_legacy_install_flow: true,
+      },
+      webhooks: {
+        api_version: '2024-07',
+      },
+    }
+    const app = testApp({configuration})
+
+    // When/Then
+    await expect(app.preDeployValidation()).resolves.not.toThrow()
+  })
+
+  test('does not throw an error when neither app-specific webhooks nor legacy install flow are used', async () => {
+    // Given
+    const configuration: CurrentAppConfiguration = {
+      ...DEFAULT_CONFIG,
+      access_scopes: {
+        scopes: 'read_orders',
+      },
+      webhooks: {
+        api_version: '2024-07',
+      },
+    }
+    const app = testApp({configuration})
+
+    // When/Then
+    await expect(app.preDeployValidation()).resolves.not.toThrow()
+  })
+
+  test('does not throw an error for legacy schema apps', async () => {
+    // Given
+    const configuration: LegacyAppConfiguration = {
+      ...CORRECT_LEGACY_APP_SCHEMA,
+      scopes: 'read_orders',
+    }
+    const app = testApp(configuration, 'legacy')
+
+    // When/Then
+    await expect(app.preDeployValidation()).resolves.not.toThrow()
+  })
+
+  test('handles null/undefined subscriptions safely', async () => {
+    // Given
+    const configuration: CurrentAppConfiguration = {
+      ...DEFAULT_CONFIG,
+      access_scopes: {
+        scopes: 'read_orders',
+        use_legacy_install_flow: true,
+      },
+      webhooks: {
+        api_version: '2024-07',
+        // Testing edge case
+        subscriptions: null as any,
+      },
+    }
+    const app = testApp({configuration})
+
+    // When/Then
+    await expect(app.preDeployValidation()).resolves.not.toThrow()
+  })
+
+  test('does not throw an error when only compliance webhooks are used with legacy install flow', async () => {
+    // Given
+    const configuration: CurrentAppConfiguration = {
+      ...DEFAULT_CONFIG,
+      access_scopes: {
+        scopes: 'read_orders',
+        use_legacy_install_flow: true,
+      },
+      webhooks: {
+        api_version: '2024-07',
+        subscriptions: [
+          {
+            compliance_topics: ['customers/data_request', 'customers/redact', 'shop/redact'],
+            uri: '/webhooks',
+          },
+        ],
+      },
+    }
+    const app = testApp({configuration})
+
+    // When/Then
+    await expect(app.preDeployValidation()).resolves.not.toThrow()
+  })
+
+  test('throws an error when both app-specific and compliance webhooks are used with legacy install flow', async () => {
+    // Given
+    const configuration: CurrentAppConfiguration = {
+      ...DEFAULT_CONFIG,
+      access_scopes: {
+        scopes: 'read_orders',
+        use_legacy_install_flow: true,
+      },
+      webhooks: {
+        api_version: '2024-07',
+        subscriptions: [
+          {
+            topics: ['orders/create'],
+            uri: '/webhooks/orders',
+          },
+          {
+            compliance_topics: ['customers/redact'],
+            uri: '/webhooks/compliance',
+          },
+        ],
+      },
+    }
+    const app = testApp({configuration})
+
+    // When/Then
+    await expect(app.preDeployValidation()).rejects.toThrow(
+      new AbortError(
+        'App-specific webhook subscriptions are not supported when use_legacy_install_flow is enabled.',
+        `To use app-specific webhooks, you need to:
+1. Remove 'use_legacy_install_flow = true' from your configuration
+2. Run 'shopify app deploy' to sync your scopes with the Partner Dashboard
+
+Alternatively, continue using shop-specific webhooks with the legacy install flow.
+
+Learn more: https://shopify.dev/docs/apps/build/authentication-authorization/app-installation`,
+      ),
+    )
+  })
+
+  test('does not throw an error for subscription with empty topics array and legacy install flow', async () => {
+    // Given
+    const configuration: CurrentAppConfiguration = {
+      ...DEFAULT_CONFIG,
+      access_scopes: {
+        scopes: 'read_orders',
+        use_legacy_install_flow: true,
+      },
+      webhooks: {
+        api_version: '2024-07',
+        subscriptions: [
+          {
+            topics: [],
+            uri: '/webhooks',
+          },
+        ],
+      },
+    }
+    const app = testApp({configuration})
+
+    // When/Then
+    await expect(app.preDeployValidation()).resolves.not.toThrow()
+  })
+
+  test('does not throw an error for subscription with only compliance_topics and no topics field', async () => {
+    // Given
+    const configuration: CurrentAppConfiguration = {
+      ...DEFAULT_CONFIG,
+      access_scopes: {
+        scopes: 'read_orders',
+        use_legacy_install_flow: true,
+      },
+      webhooks: {
+        api_version: '2024-07',
+        subscriptions: [
+          {
+            // Only compliance_topics, no topics field at all
+            compliance_topics: ['customers/data_request'],
+            uri: '/webhooks/gdpr',
+          },
+        ],
+      },
+    }
+    const app = testApp({configuration})
+
+    // When/Then
+    await expect(app.preDeployValidation()).resolves.not.toThrow()
+  })
+})
+
 describe('validateFunctionExtensionsWithUiHandle', () => {
   const generateFunctionConfig = ({type, uiHandle}: {type?: string; uiHandle?: string}): FunctionConfigType => ({
     description: 'description',
     build: {
       command: 'echo "hello world"',
+      wasm_opt: true,
     },
     api_version: '2022-07',
     configuration_ui: true,
-    metafields: [],
     name: 'test function extension',
-    type: type || 'product_discounts',
+    type: type ?? 'product_discounts',
     ui: {
-      handle: uiHandle || 'test-ui-handle',
+      handle: uiHandle ?? 'test-ui-handle',
     },
   })
 
@@ -374,7 +647,7 @@ describe('allExtensions', () => {
 
     const webhookConfig = app.allExtensions.find((ext) => ext.handle === 'webhooks')!
       .configuration as unknown as WebhookTestConfig
-    const privacyConfig = app.allExtensions.find((ext) => ext.handle === 'privacy-compliance-webhooks')!
+    const privacyConfig = app.allExtensions.find((ext) => ext.handle === 'privacy_compliance_webhooks')!
       .configuration as unknown as WebhookTestConfig
 
     expect(webhookConfig.webhooks.subscriptions!.length).not.toStrictEqual(0)
@@ -388,6 +661,26 @@ describe('allExtensions', () => {
     const app = testApp(
       {
         configuration: CORRECT_CURRENT_APP_SCHEMA,
+        allExtensions: [configExtension],
+      },
+      'current',
+    )
+
+    expect(app.allExtensions).toContain(configExtension)
+  })
+
+  test('includes configuration extensions by default when include_config_on_deploy is undefined', async () => {
+    const configExtension = await testAppAccessConfigExtension()
+    const app = testApp(
+      {
+        configuration: {
+          ...CORRECT_CURRENT_APP_SCHEMA,
+          build: {
+            automatically_update_urls_on_dev: true,
+            dev_store_url: 'https://google.com',
+            include_config_on_deploy: undefined,
+          },
+        },
         allExtensions: [configExtension],
       },
       'current',
@@ -416,27 +709,214 @@ describe('allExtensions', () => {
 
     expect(app.allExtensions).toHaveLength(0)
   })
+})
 
-  test('includes configuration extensions when using App Management API, ignoring include_config_on_deploy', async () => {
-    const configuration = {
-      ...CORRECT_CURRENT_APP_SCHEMA,
-      organization_id: '12345',
-      build: {
-        automatically_update_urls_on_dev: true,
-        dev_store_url: 'https://google.com',
-        include_config_on_deploy: false,
+describe('manifest', () => {
+  test('generates a manifest with basic app information and modules', async () => {
+    // Given
+    const appAccessModule = await testAppAccessConfigExtension()
+
+    const app = await testApp({
+      name: 'my-app',
+      allExtensions: [appAccessModule],
+      configuration: {
+        ...DEFAULT_CONFIG,
+        client_id: 'test-client-id',
+      },
+    })
+
+    // When
+    const manifest = await app.manifest({
+      app: 'API_KEY',
+      extensions: {app_access: 'UUID_A'},
+      extensionIds: {},
+      extensionsNonUuidManaged: {},
+    })
+
+    // Then
+    expect(manifest).toEqual({
+      name: 'my-app',
+      handle: '',
+      modules: [
+        {
+          type: 'app_access_external',
+          handle: 'app_access',
+          uid: appAccessModule.uid,
+          uuid: 'UUID_A',
+          assets: appAccessModule.uid,
+          target: appAccessModule.contextValue,
+          config: expect.objectContaining({
+            redirect_url_allowlist: ['https://example.com/auth/callback'],
+          }),
+        },
+      ],
+    })
+  })
+
+  test('patches the manifest with development URLs when available', async () => {
+    // Given
+    const appHome = await testAppHomeConfigExtension()
+    const appAccess = await testAppAccessConfigExtension()
+    const appProxy = await testAppProxyConfigExtension()
+
+    const devApplicationURLs: ApplicationURLs = {
+      applicationUrl: 'https://new-url.io',
+      redirectUrlWhitelist: ['https://new-url.io/auth/callback'],
+      appProxy: {
+        proxyUrl: 'https://new-proxy-url.io',
+        proxySubPath: '/updated-path',
+        proxySubPathPrefix: 'updated-prefix',
       },
     }
-    const configExtension = await testAppAccessConfigExtension()
-    const app = testApp(
-      {
-        configuration,
-        allExtensions: [configExtension],
-      },
-      'current',
-    )
 
-    expect(app.allExtensions).toContain(configExtension)
+    const app = await testApp({
+      name: 'my-app',
+      allExtensions: [appHome, appProxy, appAccess],
+      configuration: {
+        ...DEFAULT_CONFIG,
+        client_id: 'test-client-id',
+      },
+      devApplicationURLs,
+    })
+
+    // When
+    const manifest = await app.manifest(undefined)
+
+    // Then
+    expect(manifest).toEqual({
+      name: 'my-app',
+      handle: '',
+      modules: [
+        {
+          type: 'app_home_external',
+          handle: 'app_home',
+          uid: appHome.uid,
+          assets: appHome.uid,
+          target: appHome.contextValue,
+          config: expect.objectContaining({
+            app_url: 'https://new-url.io',
+          }),
+        },
+        {
+          type: 'app_proxy_external',
+          handle: 'app_proxy',
+          uid: appProxy.uid,
+          assets: appProxy.uid,
+          target: appProxy.contextValue,
+          config: expect.objectContaining({
+            url: 'https://new-proxy-url.io',
+            subpath: '/updated-path',
+            prefix: 'updated-prefix',
+          }),
+        },
+        {
+          type: 'app_access_external',
+          handle: 'app_access',
+          uid: appAccess.uid,
+          assets: appAccess.uid,
+          target: appAccess.contextValue,
+          config: expect.objectContaining({
+            redirect_url_allowlist: ['https://new-url.io/auth/callback'],
+          }),
+        },
+      ],
+    })
+  })
+
+  test('does not patch URLs when devApplicationURLs is not available', async () => {
+    // Given
+    const appHome = await testAppHomeConfigExtension()
+
+    const app = await testApp({
+      name: 'my-app',
+      allExtensions: [appHome],
+      configuration: {
+        ...DEFAULT_CONFIG,
+        client_id: 'test-client-id',
+      },
+      devApplicationURLs: undefined,
+    })
+
+    // When
+    const manifest = await app.manifest(undefined)
+
+    // Then
+    expect(manifest).toEqual({
+      name: 'my-app',
+      handle: '',
+      modules: [
+        {
+          type: 'app_home_external',
+          handle: 'app_home',
+          uid: appHome.uid,
+          assets: appHome.uid,
+          target: appHome.contextValue,
+          config: {
+            app_url: 'https://example.com',
+            embedded: true,
+          },
+        },
+      ],
+    })
+  })
+})
+
+describe('generateExtensionTypes', () => {
+  test('creates a shopify.d.ts for each key in the typeDefinitionsByFile map with combined types', async () => {
+    await inTemporaryDirectory(async (tmpDir) => {
+      // Given
+      const ext1Dir = joinPath(tmpDir, 'extensions', 'ext1')
+      const ext2Dir = joinPath(tmpDir, 'extensions', 'ext2')
+
+      await mkdir(ext1Dir)
+      await mkdir(ext2Dir)
+
+      const uiExtension1 = await testUIExtension({type: 'ui_extension', handle: 'ext1', directory: ext1Dir})
+      const uiExtension2 = await testUIExtension({type: 'ui_extension', handle: 'ext2', directory: ext2Dir})
+
+      const app = testApp({
+        directory: tmpDir,
+        allExtensions: [uiExtension1, uiExtension2],
+      })
+
+      // Mock the extension contributions
+      vi.spyOn(uiExtension1, 'contributeToSharedTypeFile').mockImplementation(async (typeDefinitionsByFile) => {
+        typeDefinitionsByFile.set(
+          joinPath(ext1Dir, 'shopify.d.ts'),
+          new Set([
+            "declare module './ext1-module-1.jsx' { // mocked ext1 module 1 definition }",
+            "declare module './ext1-module-2.jsx' { // mocked ext1 module 2 definition }",
+          ]),
+        )
+      })
+      vi.spyOn(uiExtension2, 'contributeToSharedTypeFile').mockImplementation(async (typeDefinitionsByFile) => {
+        typeDefinitionsByFile.set(
+          joinPath(ext2Dir, 'shopify.d.ts'),
+          new Set([
+            "declare module './ext2-module-1.jsx' { // mocked ext2 module 1 definition }",
+            "declare module './ext2-module-2.jsx' { // mocked ext2 module 2 definition }",
+          ]),
+        )
+      })
+
+      // When
+      await app.generateExtensionTypes()
+
+      // Then
+      const ext1TypeFilePath = joinPath(ext1Dir, 'shopify.d.ts')
+      const ext1FileContent = await readFile(ext1TypeFilePath)
+      const normalizedExt1Content = ext1FileContent.toString().replace(/\\/g, '/')
+      expect(normalizedExt1Content).toBe(`import '@shopify/ui-extensions';\n
+declare module './ext1-module-1.jsx' { // mocked ext1 module 1 definition }
+declare module './ext1-module-2.jsx' { // mocked ext1 module 2 definition }`)
+
+      const ext2TypeFilePath = joinPath(ext2Dir, 'shopify.d.ts')
+      const ext2FileContent = await readFile(ext2TypeFilePath)
+      const normalizedExt2Content = ext2FileContent.toString().replace(/\\/g, '/')
+      expect(normalizedExt2Content).toBe(`import '@shopify/ui-extensions';\n
+declare module './ext2-module-1.jsx' { // mocked ext2 module 1 definition }
+declare module './ext2-module-2.jsx' { // mocked ext2 module 2 definition }`)
+    })
   })
 })
 

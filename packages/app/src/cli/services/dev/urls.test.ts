@@ -2,9 +2,9 @@ import {
   updateURLs,
   shouldOrPromptUpdateURLs,
   generateFrontendURL,
-  generatePartnersURLs,
-  PartnersURLs,
-  validatePartnersURLs,
+  generateApplicationURLs,
+  ApplicationURLs,
+  validateApplicationURLs,
   FrontendURLOptions,
 } from './urls.js'
 import {
@@ -15,7 +15,8 @@ import {
 } from '../../models/app/app.test-data.js'
 import {UpdateURLsVariables} from '../../api/graphql/update_urls.js'
 import {setCachedAppInfo} from '../local-storage.js'
-import {patchAppConfigurationFile} from '../app/patch-app-configuration-file.js'
+import {setManyAppConfigValues} from '../app/patch-app-configuration-file.js'
+import {AppLinkedInterface} from '../../models/app/app.js'
 import {beforeEach, describe, expect, vi, test} from 'vitest'
 import {AbortError} from '@shopify/cli-kit/node/error'
 import {checkPortAvailability, getAvailableTCPPort} from '@shopify/cli-kit/node/tcp'
@@ -25,7 +26,11 @@ import {renderConfirmationPrompt, renderSelectPrompt} from '@shopify/cli-kit/nod
 import {terminalSupportsPrompting} from '@shopify/cli-kit/node/system'
 
 vi.mock('../local-storage.js')
-vi.mock('../app/patch-app-configuration-file.js')
+vi.mock('../app/patch-app-configuration-file.js', () => {
+  return {
+    setManyAppConfigValues: vi.fn(),
+  }
+})
 vi.mock('@shopify/cli-kit/node/tcp')
 vi.mock('@shopify/cli-kit/node/context/spin')
 vi.mock('@shopify/cli-kit/node/context/local')
@@ -40,7 +45,7 @@ beforeEach(() => {
 })
 
 const defaultOptions: FrontendURLOptions = {
-  noTunnel: false,
+  noTunnelUseLocalhost: false,
   tunnelUrl: undefined,
   tunnelClient: {
     getTunnelStatus: () => ({status: 'starting'}),
@@ -91,22 +96,17 @@ describe('updateURLs', () => {
     await updateURLs(urls, apiKey, testDeveloperPlatformClient(), appWithConfig)
 
     // Then
-    expect(patchAppConfigurationFile).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: appWithConfig.configuration.path,
-        patch: {
-          application_url: 'https://example.com',
-          auth: {
-            redirect_urls: [
-              'https://example.com/auth/callback',
-              'https://example.com/auth/shopify/callback',
-              'https://example.com/api/auth/callback',
-            ],
-          },
-        },
-        schema: expect.any(Object),
-      }),
-    )
+    expect(setManyAppConfigValues).toHaveBeenCalledWith(appWithConfig.configuration.path, [
+      {keyPath: 'application_url', value: 'https://example.com'},
+      {
+        keyPath: 'auth.redirect_urls',
+        value: [
+          'https://example.com/auth/callback',
+          'https://example.com/auth/shopify/callback',
+          'https://example.com/api/auth/callback',
+        ],
+      },
+    ])
   })
 
   test('throws an error if requests has a user error', async () => {
@@ -179,27 +179,20 @@ describe('updateURLs', () => {
     await updateURLs(urls, apiKey, testDeveloperPlatformClient(), appWithConfig)
 
     // Then
-    expect(patchAppConfigurationFile).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: appWithConfig.configuration.path,
-        patch: {
-          application_url: 'https://example.com',
-          auth: {
-            redirect_urls: [
-              'https://example.com/auth/callback',
-              'https://example.com/auth/shopify/callback',
-              'https://example.com/api/auth/callback',
-            ],
-          },
-          app_proxy: {
-            url: 'https://example.com',
-            subpath: 'subpath',
-            prefix: 'prefix',
-          },
-        },
-        schema: expect.any(Object),
-      }),
-    )
+    expect(setManyAppConfigValues).toHaveBeenCalledWith(appWithConfig.configuration.path, [
+      {keyPath: 'application_url', value: 'https://example.com'},
+      {
+        keyPath: 'auth.redirect_urls',
+        value: [
+          'https://example.com/auth/callback',
+          'https://example.com/auth/shopify/callback',
+          'https://example.com/api/auth/callback',
+        ],
+      },
+      {keyPath: 'app_proxy.url', value: 'https://example.com'},
+      {keyPath: 'app_proxy.subpath', value: 'subpath'},
+      {keyPath: 'app_proxy.prefix', value: 'prefix'},
+    ])
   })
 })
 
@@ -216,6 +209,11 @@ describe('shouldOrPromptUpdateURLs', () => {
       appDirectory: '/path',
       newApp: true,
       apiKey: 'api-key',
+      developerPlatformClient: testDeveloperPlatformClient(),
+      newURLs: {
+        applicationUrl: 'https://example.com/home',
+        redirectUrlWhitelist: ['https://example.com/auth/callback'],
+      },
     }
 
     // When
@@ -232,6 +230,11 @@ describe('shouldOrPromptUpdateURLs', () => {
       appDirectory: '/path',
       cachedUpdateURLs: true,
       apiKey: 'api-key',
+      developerPlatformClient: testDeveloperPlatformClient(),
+      newURLs: {
+        applicationUrl: 'https://example.com/home',
+        redirectUrlWhitelist: ['https://example.com/auth/callback'],
+      },
     }
 
     // When
@@ -248,6 +251,11 @@ describe('shouldOrPromptUpdateURLs', () => {
       appDirectory: '/path',
       cachedUpdateURLs: false,
       apiKey: 'api-key',
+      developerPlatformClient: testDeveloperPlatformClient(),
+      newURLs: {
+        applicationUrl: 'https://example.com/home',
+        redirectUrlWhitelist: ['https://example.com/auth/callback'],
+      },
     }
 
     // When
@@ -263,6 +271,11 @@ describe('shouldOrPromptUpdateURLs', () => {
       currentURLs,
       appDirectory: '/path',
       apiKey: 'api-key',
+      developerPlatformClient: testDeveloperPlatformClient(),
+      newURLs: {
+        applicationUrl: 'https://example.com/home',
+        redirectUrlWhitelist: ['https://example.com/auth/callback'],
+      },
     }
     vi.mocked(renderConfirmationPrompt).mockResolvedValue(true)
 
@@ -279,6 +292,11 @@ describe('shouldOrPromptUpdateURLs', () => {
       currentURLs,
       appDirectory: '/path',
       apiKey: 'api-key',
+      developerPlatformClient: testDeveloperPlatformClient(),
+      newURLs: {
+        applicationUrl: 'https://example.com/home',
+        redirectUrlWhitelist: ['https://example.com/auth/callback'],
+      },
     }
     vi.mocked(renderConfirmationPrompt).mockResolvedValue(false)
 
@@ -295,6 +313,11 @@ describe('shouldOrPromptUpdateURLs', () => {
       currentURLs,
       appDirectory: '/path',
       apiKey: 'api-key',
+      developerPlatformClient: testDeveloperPlatformClient(),
+      newURLs: {
+        applicationUrl: 'https://example.com/home',
+        redirectUrlWhitelist: ['https://example.com/auth/callback'],
+      },
     }
     vi.mocked(renderConfirmationPrompt).mockResolvedValue(true)
 
@@ -314,7 +337,12 @@ describe('shouldOrPromptUpdateURLs', () => {
       currentURLs,
       appDirectory: '/path',
       apiKey: 'api-key',
-      localApp: testApp({configuration: {...DEFAULT_CONFIG, client_id: 'different'}}, 'current'),
+      localApp: testApp({configuration: {...DEFAULT_CONFIG, client_id: 'different'}}, 'current') as AppLinkedInterface,
+      developerPlatformClient: testDeveloperPlatformClient(),
+      newURLs: {
+        applicationUrl: 'https://example.com/home',
+        redirectUrlWhitelist: ['https://example.com/auth/callback'],
+      },
     }
     vi.mocked(renderConfirmationPrompt).mockResolvedValue(true)
 
@@ -324,7 +352,7 @@ describe('shouldOrPromptUpdateURLs', () => {
     // Then
     expect(result).toBe(true)
     expect(setCachedAppInfo).not.toHaveBeenCalled()
-    expect(patchAppConfigurationFile).not.toHaveBeenCalled()
+    expect(setManyAppConfigValues).not.toHaveBeenCalled()
   })
 
   test('updates the config file if current config client matches remote', async () => {
@@ -334,7 +362,12 @@ describe('shouldOrPromptUpdateURLs', () => {
       currentURLs,
       appDirectory: '/path',
       apiKey: 'api-key',
-      localApp,
+      localApp: localApp as AppLinkedInterface,
+      developerPlatformClient: testDeveloperPlatformClient(),
+      newURLs: {
+        applicationUrl: 'https://example.com/home',
+        redirectUrlWhitelist: ['https://example.com/auth/callback'],
+      },
     }
     vi.mocked(renderConfirmationPrompt).mockResolvedValue(true)
 
@@ -344,15 +377,9 @@ describe('shouldOrPromptUpdateURLs', () => {
     // Then
     expect(result).toBe(true)
     expect(setCachedAppInfo).not.toHaveBeenCalled()
-    expect(patchAppConfigurationFile).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: localApp.configuration.path,
-        patch: {
-          build: {automatically_update_urls_on_dev: true},
-        },
-        schema: expect.any(Object),
-      }),
-    )
+    expect(setManyAppConfigValues).toHaveBeenCalledWith(localApp.configuration.path, [
+      {keyPath: 'build.automatically_update_urls_on_dev', value: true},
+    ])
   })
 })
 
@@ -407,15 +434,15 @@ describe('generateFrontendURL', () => {
     expect(got).toEqual({frontendUrl: 'https://fake-url.cloudflare.io', frontendPort: 3042, usingLocalhost: false})
   })
 
-  test('returns localhost if noTunnel is true', async () => {
+  test('returns localhost if noTunnelUseLocalhost is true', async () => {
     // Given
-    const options = {...defaultOptions, noTunnel: true}
+    const options: FrontendURLOptions = {noTunnelUseLocalhost: true, port: 1234}
 
     // When
     const got = await generateFrontendURL(options)
 
     // Then
-    expect(got).toEqual({frontendUrl: 'http://localhost', frontendPort: 3042, usingLocalhost: true})
+    expect(got).toEqual({frontendUrl: 'https://localhost', frontendPort: 1234, usingLocalhost: true})
     expect(renderSelectPrompt).not.toBeCalled()
   })
 
@@ -556,7 +583,7 @@ describe('generatePartnersURLs', () => {
   test('Returns the default values without an override', () => {
     const applicationUrl = 'http://my-base-url'
 
-    const got = generatePartnersURLs(applicationUrl)
+    const got = generateApplicationURLs(applicationUrl)
 
     expect(got).toMatchObject({
       applicationUrl,
@@ -572,7 +599,7 @@ describe('generatePartnersURLs', () => {
     const applicationUrl = 'http://my-base-url'
     const overridePath = '/my/custom/path'
 
-    const got = generatePartnersURLs(applicationUrl, overridePath)
+    const got = generateApplicationURLs(applicationUrl, overridePath)
 
     expect(got).toMatchObject({
       applicationUrl,
@@ -584,7 +611,7 @@ describe('generatePartnersURLs', () => {
     const applicationUrl = 'http://my-base-url'
     const overridePath = ['/my/custom/path1', '/my/custom/path2']
 
-    const got = generatePartnersURLs(applicationUrl, overridePath)
+    const got = generateApplicationURLs(applicationUrl, overridePath)
 
     expect(got).toMatchObject({
       applicationUrl,
@@ -595,7 +622,7 @@ describe('generatePartnersURLs', () => {
   test('Returns app proxy section when receiving proxy fields', () => {
     const applicationUrl = 'http://my-base-url'
 
-    const got = generatePartnersURLs(applicationUrl, [], {
+    const got = generateApplicationURLs(applicationUrl, [], {
       url: applicationUrl,
       subpath: 'subpath',
       prefix: 'prefix',
@@ -620,8 +647,32 @@ describe('generatePartnersURLs', () => {
     const applicationUrl = 'http://my-base-url'
     const proxyUrl = 'http://old-base-url/subpath'
 
-    const got = generatePartnersURLs(applicationUrl, [], {
+    const got = generateApplicationURLs(applicationUrl, [], {
       url: proxyUrl,
+      subpath: 'subpath',
+      prefix: 'prefix',
+    })
+
+    expect(got).toMatchObject({
+      applicationUrl,
+      redirectUrlWhitelist: [
+        `${applicationUrl}/auth/callback`,
+        `${applicationUrl}/auth/shopify/callback`,
+        `${applicationUrl}/api/auth/callback`,
+      ],
+      appProxy: {
+        proxyUrl: 'http://my-base-url/subpath',
+        proxySubPath: 'subpath',
+        proxySubPathPrefix: 'prefix',
+      },
+    })
+  })
+
+  test('Returns app proxy section when receiving a relative proxy url', () => {
+    const applicationUrl = 'http://my-base-url'
+
+    const got = generateApplicationURLs(applicationUrl, [], {
+      url: '/subpath',
       subpath: 'subpath',
       prefix: 'prefix',
     })
@@ -647,47 +698,47 @@ describe('validatePartnersURLs', () => {
     // Given
     const applicationUrl = 'http://example.com'
     const redirectUrlWhitelist = ['http://example.com/callback1', 'http://example.com/callback2']
-    const urls: PartnersURLs = {
+    const urls: ApplicationURLs = {
       applicationUrl,
       redirectUrlWhitelist,
       appProxy: {proxyUrl: applicationUrl, proxySubPath: '', proxySubPathPrefix: ''},
     }
 
     // When/Then
-    validatePartnersURLs(urls)
+    validateApplicationURLs(urls)
   })
 
   test('it raises an error when the application URL is not valid', () => {
     // Given
     const applicationUrl = 'wrong'
     const redirectUrlWhitelist = ['http://example.com/callback1', 'http://example.com/callback2']
-    const urls: PartnersURLs = {applicationUrl, redirectUrlWhitelist}
+    const urls: ApplicationURLs = {applicationUrl, redirectUrlWhitelist}
 
     // When/Then
-    expect(() => validatePartnersURLs(urls)).toThrow(/Invalid application URL/)
+    expect(() => validateApplicationURLs(urls)).toThrow(/Invalid application URL/)
   })
 
   test('it raises an error when the redirection URLs are not valid', () => {
     // Given
     const applicationUrl = 'http://example.com'
     const redirectUrlWhitelist = ['http://example.com/callback1', 'wrong']
-    const urls: PartnersURLs = {applicationUrl, redirectUrlWhitelist}
+    const urls: ApplicationURLs = {applicationUrl, redirectUrlWhitelist}
 
     // When/Then
-    expect(() => validatePartnersURLs(urls)).toThrow(/Invalid redirection URLs/)
+    expect(() => validateApplicationURLs(urls)).toThrow(/Invalid redirection URLs/)
   })
 
   test('it raises an error when the app proxy URL is not valid', () => {
     // Given
     const applicationUrl = 'http://example.com'
     const redirectUrlWhitelist = ['http://example.com/callback1', 'http://example.com/callback2']
-    const urls: PartnersURLs = {
+    const urls: ApplicationURLs = {
       applicationUrl,
       redirectUrlWhitelist,
       appProxy: {proxyUrl: 'wrong', proxySubPath: '', proxySubPathPrefix: ''},
     }
 
     // When/Then
-    expect(() => validatePartnersURLs(urls)).toThrow(/Invalid app proxy URL/)
+    expect(() => validateApplicationURLs(urls)).toThrow(/Invalid app proxy URL/)
   })
 })

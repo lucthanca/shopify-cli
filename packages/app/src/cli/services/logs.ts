@@ -1,14 +1,15 @@
-import {formInfoBoxBody, resetHelpMessage} from './context.js'
+import {resetHelpMessage} from './context.js'
 import {renderLogs} from './app-logs/logs-command/ui.js'
 import {subscribeToAppLogs, sourcesForApp} from './app-logs/utils.js'
 import {renderJsonLogs} from './app-logs/logs-command/render-json-logs.js'
 import {fetchStore} from './dev/fetch.js'
+import {formatConfigInfoBody} from './format-config-info-body.js'
 import {AppLinkedInterface} from '../models/app/app.js'
 import {getAppConfigurationFileName} from '../models/app/loader.js'
 import {DeveloperPlatformClient} from '../utilities/developer-platform-client.js'
 import {Organization, OrganizationApp, OrganizationStore} from '../models/organization.js'
 import {AbortError} from '@shopify/cli-kit/node/error'
-import {consoleLog} from '@shopify/cli-kit/node/output'
+import {outputInfo, outputResult} from '@shopify/cli-kit/node/output'
 import {renderInfo} from '@shopify/cli-kit/node/ui'
 import {basename} from '@shopify/cli-kit/node/path'
 
@@ -48,12 +49,11 @@ export async function logs(commandOptions: LogsOptions) {
   }
 
   const variables = {
-    shopIds: logsConfig.storeIds,
+    shopIds: logsConfig.storeIds.map(Number),
     apiKey: remoteApp.apiKey,
-    token: '',
   }
 
-  const jwtToken = await subscribeToAppLogs(developerPlatformClient, variables)
+  const jwtToken = await subscribeToAppLogs(developerPlatformClient, variables, commandOptions.organization.id)
 
   const filters = {
     status: commandOptions.status,
@@ -66,8 +66,8 @@ export async function logs(commandOptions: LogsOptions) {
   }
 
   if (commandOptions.format === 'json') {
-    consoleLog(JSON.stringify({subscribedToStores: commandOptions.storeFqdns}))
-    consoleLog(JSON.stringify({message: 'Waiting for app logs...'}))
+    outputResult(JSON.stringify({subscribedToStores: commandOptions.storeFqdns}))
+    outputInfo(JSON.stringify({message: 'Waiting for app logs...'}))
     await renderJsonLogs({
       options: {
         variables,
@@ -75,9 +75,10 @@ export async function logs(commandOptions: LogsOptions) {
       },
       pollOptions,
       storeNameById: logsConfig.storeNameById,
+      organizationId: commandOptions.organization.id,
     })
   } else {
-    consoleLog('Waiting for app logs...\n')
+    outputInfo('Waiting for app logs...\n')
     await renderLogs({
       options: {
         variables,
@@ -85,6 +86,7 @@ export async function logs(commandOptions: LogsOptions) {
       },
       pollOptions,
       storeNameById: logsConfig.storeNameById,
+      organizationId: commandOptions.organization.id,
     })
   }
 }
@@ -133,11 +135,11 @@ function renderAppLogsConfigInfo(
   } else {
     devStores.push(storeFqdn)
   }
-  const body = formInfoBoxBody(appName, org, devStores, resetHelpMessage)
+
   const fileName = configFile ? getAppConfigurationFileName(configFile) : undefined
 
   renderInfo({
     headline: configFile ? `Using ${fileName} for default values:` : 'Using these settings:',
-    body,
+    body: formatConfigInfoBody({appName, org, devStores, messages: [resetHelpMessage]}),
   })
 }

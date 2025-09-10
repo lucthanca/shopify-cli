@@ -17,6 +17,7 @@ import {
   MinimalAppIdentifiers,
   OrganizationApp,
   MinimalOrganizationApp,
+  OrganizationSource,
 } from '../organization.js'
 import {RemoteSpecification} from '../../api/graphql/extension_specifications.js'
 import {ExtensionInstance} from '../extensions/extension-instance.js'
@@ -27,13 +28,17 @@ import {PartnersSession} from '../../services/context/partner-account-info.js'
 import {WebhooksConfig} from '../extensions/specifications/types/app_config_webhook.js'
 import {PaymentsAppExtensionConfigType} from '../extensions/specifications/payments_app_extension.js'
 import {
+  AppLogsResponse,
   AppVersion,
   AppVersionIdentifiers,
   AppVersionWithContext,
   AssetUrlSchema,
+  ClientName,
   CreateAppOptions,
   DeveloperPlatformClient,
-  DevSessionOptions,
+  DevSessionCreateOptions,
+  DevSessionDeleteOptions,
+  DevSessionUpdateOptions,
 } from '../../utilities/developer-platform-client.js'
 import {AllAppExtensionRegistrationsQuerySchema} from '../../api/graphql/all_app_extension_registrations.js'
 import {AppDeploySchema, AppDeployVariables} from '../../api/graphql/app_deploy.js'
@@ -62,13 +67,18 @@ import {
 import {MigrateAppModuleSchema, MigrateAppModuleVariables} from '../../api/graphql/extension_migrate_app_module.js'
 import appWebhookSubscriptionSpec from '../extensions/specifications/app_config_webhook_subscription.js'
 import appAccessSpec from '../extensions/specifications/app_config_app_access.js'
-import {AppLogsSubscribeResponse, AppLogsSubscribeVariables} from '../../api/graphql/subscribe_to_app_logs.js'
+import {AppLogsSubscribeResponse} from '../../api/graphql/subscribe_to_app_logs.js'
 import {
   ExtensionUpdateDraftMutation,
   ExtensionUpdateDraftMutationVariables,
 } from '../../api/graphql/partners/generated/update-draft.js'
 import {SchemaDefinitionByTargetQueryVariables} from '../../api/graphql/functions/generated/schema-definition-by-target.js'
 import {SchemaDefinitionByApiTypeQueryVariables} from '../../api/graphql/functions/generated/schema-definition-by-api-type.js'
+import {AppHomeSpecIdentifier} from '../extensions/specifications/app_config_app_home.js'
+import {AppProxySpecIdentifier} from '../extensions/specifications/app_config_app_proxy.js'
+import {ExtensionSpecification} from '../extensions/specification.js'
+import {AppLogsOptions} from '../../services/app-logs/utils.js'
+import {AppLogsSubscribeMutationVariables} from '../../api/graphql/app-management/generated/app-logs-subscribe.js'
 import {vi} from 'vitest'
 import {joinPath} from '@shopify/cli-kit/node/path'
 
@@ -117,6 +127,8 @@ export function testApp(app: Partial<AppInterface> = {}, schemaType: 'current' |
     specifications: app.specifications ?? [],
     configSchema: (app.configSchema ?? AppConfigurationSchema) as any,
     remoteFlags: app.remoteFlags ?? [],
+    hiddenConfig: app.hiddenConfig ?? {},
+    devApplicationURLs: app.devApplicationURLs,
   })
 
   if (app.updateDependencies) {
@@ -175,6 +187,7 @@ export function testOrganization(): Organization {
   return {
     id: '1',
     businessName: 'org1',
+    source: OrganizationSource.BusinessPlatform,
   }
 }
 
@@ -188,6 +201,7 @@ export function testOrganizationApp(app: Partial<OrganizationApp> = {}): Organiz
     grantedScopes: [],
     disabledFlags: ['5b25141b'],
     flags: [],
+    developerPlatformClient: testDeveloperPlatformClient(),
   }
   return {...defaultApp, ...app}
 }
@@ -196,7 +210,7 @@ export const placeholderAppConfiguration: AppConfigurationWithoutPath = {scopes:
 
 export async function testUIExtension(
   uiExtension: Omit<Partial<ExtensionInstance>, 'configuration'> & {
-    configuration?: Partial<BaseConfigType> & {path?: string}
+    configuration?: Partial<BaseConfigType> & {path?: string} & {metafields?: {namespace: string; key: string}[]}
   } = {},
 ): Promise<ExtensionInstance> {
   const directory = uiExtension?.directory ?? '/tmp/project/extensions/test-ui-extension'
@@ -205,6 +219,7 @@ export async function testUIExtension(
     name: uiExtension?.name ?? 'test-ui-extension',
     type: uiExtension?.type ?? 'product_subscription',
     handle: uiExtension?.handle ?? 'test-ui-extension',
+    uid: uiExtension?.uid ?? undefined,
     metafields: [],
     capabilities: {
       block_progress: false,
@@ -330,7 +345,56 @@ export async function testAppAccessConfigExtension(
     configuration,
     configurationPath: 'shopify.app.toml',
     directory: directory ?? './',
-    specification: appAccessSpec,
+    specification: appAccessSpec as unknown as ExtensionSpecification,
+  })
+
+  return extension
+}
+
+export async function testAppHomeConfigExtension(): Promise<ExtensionInstance> {
+  const configuration = {
+    name: 'App Home',
+    type: 'app_home',
+    handle: 'app-home',
+    application_url: 'https://example.com',
+    embedded: true,
+    metafields: [],
+  }
+
+  const allSpecs = await loadLocalExtensionsSpecifications()
+  const specification = allSpecs.find((spec) => spec.identifier === AppHomeSpecIdentifier)!
+
+  const extension = new ExtensionInstance({
+    configuration,
+    configurationPath: '',
+    directory: './',
+    specification,
+  })
+
+  return extension
+}
+
+export async function testAppProxyConfigExtension(): Promise<ExtensionInstance> {
+  const configuration = {
+    name: 'App Proxy',
+    type: 'app_proxy',
+    handle: 'app-proxy',
+    metafields: [],
+    app_proxy: {
+      url: 'https://example.com',
+      subpath: 'apps',
+      prefix: 'apps',
+    },
+  }
+
+  const allSpecs = await loadLocalExtensionsSpecifications()
+  const specification = allSpecs.find((spec) => spec.identifier === AppProxySpecIdentifier)!
+
+  const extension = new ExtensionInstance({
+    configuration,
+    configurationPath: '',
+    directory: './',
+    specification,
   })
 
   return extension
@@ -439,7 +503,7 @@ export async function testSingleWebhookSubscriptionExtension({
     configuration,
     configurationPath: 'shopify.app.toml',
     directory: './',
-    specification: appWebhookSubscriptionSpec,
+    specification: appWebhookSubscriptionSpec as unknown as ExtensionSpecification,
   })
 
   return webhooksExtension
@@ -501,10 +565,10 @@ function defaultFunctionConfiguration(): FunctionConfigType {
     build: {
       command: 'echo "hello world"',
       watch: ['src/**/*.rs'],
+      wasm_opt: true,
     },
     api_version: '2022-07',
     configuration_ui: true,
-    metafields: [],
   }
 }
 
@@ -605,6 +669,7 @@ export function testOrganizationStore({shopId, shopDomain}: {shopId?: string; sh
     shopName: 'store1',
     transferDisabled: false,
     convertableToPartnerTest: false,
+    provisionable: true,
   }
 }
 
@@ -619,6 +684,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: true,
     },
     features: {
       argo: {
@@ -636,6 +702,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: true,
     },
   },
   {
@@ -648,6 +715,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: true,
     },
     features: {
       argo: {
@@ -665,6 +733,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 50,
+      uidIsClientProvided: true,
     },
     features: {
       argo: {
@@ -682,6 +751,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 5,
+      uidIsClientProvided: true,
     },
     features: {
       argo: {
@@ -701,6 +771,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: true,
     },
     features: {
       argo: {
@@ -718,6 +789,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'dashboard',
       registrationLimit: 100,
+      uidIsClientProvided: true,
     },
   },
   {
@@ -730,6 +802,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: true,
     },
     features: {
       argo: {
@@ -747,6 +820,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 100,
+      uidIsClientProvided: true,
     },
   },
   {
@@ -759,6 +833,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 100,
+      uidIsClientProvided: true,
     },
   },
   {
@@ -771,6 +846,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 300,
+      uidIsClientProvided: true,
     },
   },
   {
@@ -783,6 +859,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 100,
+      uidIsClientProvided: true,
     },
   },
   {
@@ -795,6 +872,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 50,
+      uidIsClientProvided: true,
     },
   },
   {
@@ -807,6 +885,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: true,
     },
   },
   {
@@ -819,6 +898,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: false,
     },
   },
   {
@@ -831,6 +911,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: false,
     },
   },
   {
@@ -843,6 +924,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: false,
     },
   },
   {
@@ -855,6 +937,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: false,
     },
   },
   {
@@ -867,6 +950,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: false,
     },
   },
   {
@@ -879,6 +963,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: false,
     },
   },
   {
@@ -891,6 +976,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: false,
     },
   },
   {
@@ -903,6 +989,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: true,
     },
   },
   {
@@ -915,6 +1002,7 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: true,
     },
     validationSchema: {
       jsonSchema:
@@ -931,10 +1019,28 @@ const testRemoteSpecifications: RemoteSpecification[] = [
     options: {
       managementExperience: 'cli',
       registrationLimit: 1,
+      uidIsClientProvided: true,
     },
     validationSchema: {
       jsonSchema:
         '{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","additionalProperties":false,"properties":{"pattern":{"type":"string"},"name":{"type":"string"},"localization":{"type":"object","properties":{"marketing_channel":{"type":"string"}},"required":["marketing_channel"]}},"required":["pattern","localization"]}',
+    },
+  },
+  {
+    name: 'Remote Extension With Schema, Without local spec, config-style management',
+    externalName: 'Extension Test 4',
+    identifier: 'remote_only_extension_schema_config_style',
+    externalIdentifier: 'remote_only_extension_schema_config_style_external',
+    gated: false,
+    experience: 'configuration',
+    options: {
+      managementExperience: 'cli',
+      registrationLimit: 1,
+      uidIsClientProvided: false,
+    },
+    validationSchema: {
+      jsonSchema:
+        '{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","additionalProperties":false,"properties":{"pattern":{"type":"string"},"name":{"type":"string"}},"required":["pattern"]}',
     },
   },
 ]
@@ -1118,6 +1224,7 @@ export const testRemoteExtensionTemplates: ExtensionTemplate[] = [
 
 export const testPartnersUserSession: PartnersSession = {
   token: 'token',
+  businessPlatformToken: 'businessPlatformToken',
   accountInfo: {
     type: 'UserAccount',
     email: 'partner@shopify.com',
@@ -1309,26 +1416,30 @@ const appLogsSubscribeResponse: AppLogsSubscribeResponse = {
 
 export function testDeveloperPlatformClient(stubs: Partial<DeveloperPlatformClient> = {}): DeveloperPlatformClient {
   const clientStub: DeveloperPlatformClient = {
-    clientName: 'test',
+    clientName: ClientName.AppManagement,
     webUiName: 'Test Dashboard',
-    requiresOrganization: false,
     supportsAtomicDeployments: false,
     supportsDevSessions: stubs.supportsDevSessions ?? false,
+    supportsStoreSearch: false,
+    organizationSource: OrganizationSource.BusinessPlatform,
+    bundleFormat: 'zip',
+    supportsDashboardManagedExtensions: true,
     session: () => Promise.resolve(testPartnersUserSession),
-    refreshToken: () => Promise.resolve(testPartnersUserSession.token),
+    unsafeRefreshToken: () => Promise.resolve(testPartnersUserSession.token),
     accountInfo: () => Promise.resolve(testPartnersUserSession.accountInfo),
-    appFromId: (_app: MinimalAppIdentifiers) => Promise.resolve(testOrganizationApp()),
+    appFromIdentifiers: (_apiKey: string) => Promise.resolve(testOrganizationApp()),
     organizations: () => Promise.resolve(organizationsResponse),
     orgFromId: (_organizationId: string) => Promise.resolve(testOrganization()),
     appsForOrg: (_organizationId: string) => Promise.resolve({apps: [testOrganizationApp()], hasMorePages: false}),
     specifications: (_app: MinimalAppIdentifiers) => Promise.resolve(testRemoteSpecifications),
-    templateSpecifications: (_app: MinimalAppIdentifiers) => Promise.resolve(testRemoteExtensionTemplates),
+    templateSpecifications: (_app: MinimalAppIdentifiers) =>
+      Promise.resolve({templates: testRemoteExtensionTemplates, groupOrder: []}),
     orgAndApps: (_orgId: string) =>
       Promise.resolve({organization: testOrganization(), apps: [testOrganizationApp()], hasMorePages: false}),
-    createApp: (_organization: Organization, _name: string, _options?: CreateAppOptions) =>
-      Promise.resolve(testOrganizationApp()),
-    devStoresForOrg: (_organizationId: string) => Promise.resolve([]),
-    storeByDomain: (_orgId: string, _shopDomain: string) => Promise.resolve({organizations: {nodes: []}}),
+    createApp: (_organization: Organization, _options: CreateAppOptions) => Promise.resolve(testOrganizationApp()),
+    devStoresForOrg: (_organizationId: string) => Promise.resolve({stores: [], hasMorePages: false}),
+    storeByDomain: (_orgId: string, _shopDomain: string) => Promise.resolve(undefined),
+    ensureUserAccessToStore: (_orgId: string, _store: OrganizationStore) => Promise.resolve(),
     appExtensionRegistrations: (_app: MinimalAppIdentifiers) => Promise.resolve(emptyAppExtensionRegistrations),
     appVersions: (_app: MinimalAppIdentifiers) => Promise.resolve(emptyAppVersions),
     activeAppVersion: (_app: MinimalAppIdentifiers) => Promise.resolve(emptyActiveAppVersion),
@@ -1357,15 +1468,34 @@ export function testDeveloperPlatformClient(stubs: Partial<DeveloperPlatformClie
       Promise.resolve('schema'),
     migrateToUiExtension: (_input: MigrateToUiExtensionVariables) => Promise.resolve(migrateToUiExtensionResponse),
     toExtensionGraphQLType: (input: string) => input,
-    subscribeToAppLogs: (_input: AppLogsSubscribeVariables) => Promise.resolve(appLogsSubscribeResponse),
+    subscribeToAppLogs: (_input: AppLogsSubscribeMutationVariables) => Promise.resolve(appLogsSubscribeResponse),
+    appLogs: (_options: AppLogsOptions): Promise<AppLogsResponse> =>
+      Promise.resolve({
+        app_logs: [
+          {
+            shop_id: 123,
+            api_client_id: 456,
+            payload: '{}',
+            log_type: 'log',
+            source: 'test',
+            source_namespace: 'test',
+            cursor: 'log-cursor',
+            status: 'success',
+            log_timestamp: '2024-01-01T00:00:00Z',
+          },
+        ],
+        cursor: 'cursor',
+        status: 200,
+      }),
     appDeepLink: (app: MinimalAppIdentifiers) =>
       Promise.resolve(`https://test.shopify.com/${app.organizationId}/apps/${app.id}`),
-    devSessionCreate: (_input: DevSessionOptions) => Promise.resolve({devSessionCreate: {userErrors: []}}),
-    devSessionUpdate: (_input: DevSessionOptions) => Promise.resolve({devSessionUpdate: {userErrors: []}}),
-    devSessionDelete: (_input: unknown) => Promise.resolve({devSessionDelete: {userErrors: []}}),
-    getCreateDevStoreLink: (_input: string) =>
-      Promise.resolve(`Looks like you don't have a dev store in the Partners org you selected. Keep going — create a dev store through the
-      Developer Dashboard: https://partners.shopify.com/organizations/1234/stores/new`),
+    devSessionCreate: (_input: DevSessionCreateOptions) => Promise.resolve({devSessionCreate: {userErrors: []}}),
+    devSessionUpdate: (_input: DevSessionUpdateOptions) => Promise.resolve({devSessionUpdate: {userErrors: []}}),
+    devSessionDelete: (_input: DevSessionDeleteOptions) => Promise.resolve({devSessionDelete: {userErrors: []}}),
+    getCreateDevStoreLink: (org: Organization) =>
+      Promise.resolve(
+        `Looks like you don't have any dev stores associated with ${org.businessName}'s Partner Dashboard. Create one now https://partners.shopify.com/1234/stores`,
+      ),
     ...stubs,
   }
   const retVal: Partial<DeveloperPlatformClient> = clientStub
@@ -1374,7 +1504,14 @@ export function testDeveloperPlatformClient(stubs: Partial<DeveloperPlatformClie
       retVal[
         key as keyof Omit<
           DeveloperPlatformClient,
-          'requiresOrganization' | 'supportsAtomicDeployments' | 'clientName' | 'webUiName' | 'supportsDevSessions'
+          | 'supportsAtomicDeployments'
+          | 'clientName'
+          | 'webUiName'
+          | 'supportsDevSessions'
+          | 'supportsStoreSearch'
+          | 'organizationSource'
+          | 'bundleFormat'
+          | 'supportsDashboardManagedExtensions'
         >
       ] = vi.fn().mockImplementation(value)
     }
@@ -1384,6 +1521,7 @@ export function testDeveloperPlatformClient(stubs: Partial<DeveloperPlatformClie
 
 export const testPartnersServiceSession: PartnersSession = {
   token: 'partnersToken',
+  businessPlatformToken: 'businessPlatformToken',
   accountInfo: {
     type: 'ServiceAccount',
     orgName: 'organization',

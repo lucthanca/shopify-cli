@@ -2,7 +2,7 @@ import metadata from '../../../../metadata.js'
 import {DeveloperPlatformClient} from '../../../../utilities/developer-platform-client.js'
 import {ExtensionInstance} from '../../../../models/extensions/extension-instance.js'
 import {OutputProcess} from '@shopify/cli-kit/node/output'
-import {ConcurrentOutput} from '@shopify/cli-kit/node/ui/components'
+import {ConcurrentOutput, Link} from '@shopify/cli-kit/node/ui/components'
 import {useAbortSignal} from '@shopify/cli-kit/node/ui/hooks'
 import React, {FunctionComponent, useEffect, useMemo, useRef, useState} from 'react'
 import {AbortController, AbortSignal} from '@shopify/cli-kit/node/abort'
@@ -16,7 +16,7 @@ import {Writable} from 'stream'
 
 export interface DeveloperPreviewController {
   fetchMode: () => Promise<boolean>
-  enable: () => Promise<void>
+  enable: () => Promise<boolean>
   disable: () => Promise<void>
   update: (state: boolean) => Promise<boolean>
 }
@@ -58,23 +58,22 @@ const Dev: FunctionComponent<DevProps> = ({
   pollingTime = 5000,
   developerPreview,
   isEditionWeek,
-  shopFqdn,
 }) => {
   const {canEnablePreviewMode, developmentStorePreviewEnabled} = app
 
   const {isRawModeSupported: canUseShortcuts} = useStdin()
   const pollingInterval = useRef<NodeJS.Timeout>()
   const localhostGraphiqlUrl = `http://localhost:${graphiqlPort}/graphiql`
-  const defaultStatusMessage = `Preview URL: ${previewUrl}${
-    graphiqlUrl ? `\nGraphiQL URL: ${localhostGraphiqlUrl}` : ''
-  }`
-  const [statusMessage, setStatusMessage] = useState(defaultStatusMessage)
+
+  const [isShuttingDownMessage, setIsShuttingDownMessage] = useState<string | undefined>(undefined)
+  const [devPreviewEnabled, setDevPreviewEnabled] = useState<boolean>(true)
+  const [error, setError] = useState<string | undefined>(undefined)
 
   const {isAborted} = useAbortSignal(abortController.signal, async (err) => {
     if (err) {
-      setStatusMessage('Shutting down dev because of an error ...')
+      setIsShuttingDownMessage('Shutting down dev because of an error ...')
     } else {
-      setStatusMessage('Shutting down dev ...')
+      setIsShuttingDownMessage('Shutting down dev ...')
       setTimeout(() => {
         if (isUnitTest()) return
         treeKill(process.pid, 'SIGINT', false, () => {
@@ -83,12 +82,8 @@ const Dev: FunctionComponent<DevProps> = ({
       }, 2000)
     }
     clearInterval(pollingInterval.current)
-    await app.developerPlatformClient.devSessionDelete({appId: app.id, shopFqdn})
     await developerPreview.disable()
   })
-
-  const [devPreviewEnabled, setDevPreviewEnabled] = useState<boolean>(true)
-  const [error, setError] = useState<string | undefined>(undefined)
 
   const errorHandledProcesses = useMemo(() => {
     return processes.map((process) => {
@@ -214,7 +209,7 @@ const Dev: FunctionComponent<DevProps> = ({
         prefixColumnSize={calculatePrefixColumnSize(errorHandledProcesses, app.extensions)}
         abortSignal={abortController.signal}
         keepRunningAfterProcessesResolve={true}
-        useAlternativeColorPalette={app.developerPlatformClient.supportsDevSessions}
+        useAlternativeColorPalette={false}
       />
       {/* eslint-disable-next-line no-negated-condition */}
       {!isAborted ? (
@@ -258,9 +253,24 @@ const Dev: FunctionComponent<DevProps> = ({
               </Text>
             </Box>
           ) : null}
-          <Box marginTop={canUseShortcuts ? 1 : 0}>
-            <Text>{statusMessage}</Text>
+
+          <Box marginTop={canUseShortcuts ? 1 : 0} flexDirection="column">
+            {isShuttingDownMessage ? (
+              <Text>{isShuttingDownMessage}</Text>
+            ) : (
+              <>
+                <Text>
+                  Preview URL: <Link url={previewUrl} />
+                </Text>
+                {graphiqlUrl ? (
+                  <Text>
+                    GraphiQL URL: <Link url={localhostGraphiqlUrl} />
+                  </Text>
+                ) : null}
+              </>
+            )}
           </Box>
+
           {error ? <Text color="red">{error}</Text> : null}
         </Box>
       ) : null}

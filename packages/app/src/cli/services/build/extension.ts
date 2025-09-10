@@ -1,7 +1,7 @@
 import {runThemeCheck} from './theme-check.js'
 import {AppInterface} from '../../models/app/app.js'
 import {bundleExtension, bundleFlowTemplateExtension} from '../extensions/bundle.js'
-import {buildJSFunction} from '../function/build.js'
+import {buildJSFunction, runTrampoline, runWasmOpt} from '../function/build.js'
 import {ExtensionInstance} from '../../models/extensions/extension-instance.js'
 import {FunctionConfigType} from '../../models/extensions/specifications/function.js'
 import {exec} from '@shopify/cli-kit/node/system'
@@ -175,14 +175,44 @@ export async function buildFunctionExtension(
     } else {
       await buildOtherFunction(extension, options)
     }
-    if (fileExistsSync(extension.outputPath) && bundlePath !== extension.outputPath) {
-      const base64Contents = await readFile(extension.outputPath, {encoding: 'base64'})
-      await touchFile(bundlePath)
-      await writeFile(bundlePath, base64Contents)
+
+    const wasmOpt = (extension as ExtensionInstance<FunctionConfigType>).configuration.build.wasm_opt
+    if (fileExistsSync(extension.outputPath) && wasmOpt) {
+      await runWasmOpt(extension.outputPath)
     }
+
+    if (fileExistsSync(extension.outputPath)) {
+      await runTrampoline(extension.outputPath)
+    }
+
+    if (fileExistsSync(extension.outputPath) && bundlePath !== extension.outputPath) {
+      await bundleFunctionExtension(extension.outputPath, bundlePath)
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } catch (error: any) {
+    // To avoid random user-code errors being reported as CLI bugs, we capture and rethrow them as AbortError.
+    // In this case, we need to keep the ESBuild details for the logs. (the `errors` array).
+    // If the error is already an AbortError, we can just rethrow it.
+    if (error instanceof AbortError) {
+      throw error
+    }
+
+    const errorMessage = (error as Error).message ?? 'Unknown error occurred'
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newError: any = new AbortError('Failed to build function.', errorMessage)
+    // Inject ESBuild errors if present
+    newError.errors = error.errors
+    throw newError
   } finally {
     await releaseLock()
   }
+}
+
+export async function bundleFunctionExtension(wasmPath: string, bundlePath: string) {
+  outputDebug(`Converting WASM from ${wasmPath} to base64 in ${bundlePath}`)
+  const base64Contents = await readFile(wasmPath, {encoding: 'base64'})
+  await touchFile(bundlePath)
+  await writeFile(bundlePath, base64Contents)
 }
 
 async function runCommandOrBuildJSFunction(extension: ExtensionInstance, options: BuildFunctionExtensionOptions) {

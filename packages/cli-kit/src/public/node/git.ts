@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/no-base-to-string */
 import {hasGit, isTerminalInteractive} from './context/local.js'
-import {appendFileSync} from './fs.js'
+import {appendFileSync, detectEOL, fileExistsSync, readFileSync, writeFileSync} from './fs.js'
 import {AbortError} from './error.js'
-import {cwd} from './path.js'
+import {cwd, joinPath} from './path.js'
 import {runWithTimer} from './metadata.js'
 import {outputContent, outputToken, outputDebug} from '../../public/node/output.js'
 import git, {TaskOptions, SimpleGitProgressEvent, DefaultLogFields, ListLogLine, SimpleGit} from 'simple-git'
+import ignore from 'ignore'
 
 /**
  * Initialize a git repository at the given directory.
@@ -61,6 +62,44 @@ export function createGitIgnore(directory: string, template: GitIgnoreTemplate):
   }
 
   appendFileSync(filePath, fileContent)
+}
+
+/**
+ * Add an entry to an existing .gitignore file.
+ *
+ * If the .gitignore file doesn't exist, or if the entry is already present,
+ * no changes will be made.
+ *
+ * @param root - The directory containing the .gitignore file.
+ * @param entry - The entry to add to the .gitignore file.
+ */
+export function addToGitIgnore(root: string, entry: string): void {
+  const gitIgnorePath = joinPath(root, '.gitignore')
+
+  if (!fileExistsSync(gitIgnorePath)) {
+    // When the .gitignore file does not exist, the CLI should not be opinionated about creating it
+    return
+  }
+
+  const gitIgnoreContent = readFileSync(gitIgnorePath).toString()
+  const eol = detectEOL(gitIgnoreContent)
+
+  const lines = gitIgnoreContent.split(eol).map((line) => line.trim())
+  const ignoreManager = ignore.default({allowRelativePaths: true}).add(lines)
+
+  const isIgnoredEntry = ignoreManager.ignores(joinPath(entry))
+  const isIgnoredEntryAsDir = ignoreManager.ignores(joinPath(entry, 'ignored.txt'))
+  const isAlreadyIgnored = isIgnoredEntry || isIgnoredEntryAsDir
+  if (isAlreadyIgnored) {
+    // The file is already ignored by an existing pattern
+    return
+  }
+
+  if (gitIgnoreContent.endsWith(eol)) {
+    writeFileSync(gitIgnorePath, `${gitIgnoreContent}${entry}${eol}`)
+  } else {
+    writeFileSync(gitIgnorePath, `${gitIgnoreContent}${eol}${entry}${eol}`)
+  }
 }
 
 /**
@@ -268,9 +307,21 @@ export class OutsideGitDirectoryError extends AbortError {}
 export async function ensureInsideGitDirectory(directory?: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore
-  if (!(await git({baseDir: directory}).checkIsRepo())) {
+  if (!(await insideGitDirectory(directory))) {
     throw new OutsideGitDirectoryError(`${outputToken.path(directory || cwd())} is not a Git directory`)
   }
+}
+
+/**
+ * Returns true if the given directory is inside a .git directory tree.
+ *
+ * @param directory - The directory to check.
+ * @returns True if the directory is inside a .git directory tree.
+ */
+export async function insideGitDirectory(directory?: string): Promise<boolean> {
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  return git({baseDir: directory}).checkIsRepo()
 }
 
 export class GitDirectoryNotCleanError extends AbortError {}
@@ -296,4 +347,44 @@ export async function isClean(directory?: string): Promise<boolean> {
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore
   return (await git({baseDir: directory}).status()).isClean()
+}
+
+/**
+ * Returns the latest tag of a git repository.
+ *
+ * @param directory - The directory to check.
+ * @returns String with the latest tag or undefined if no tags are found.
+ */
+export async function getLatestTag(directory?: string): Promise<string | undefined> {
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  const tags = await git({baseDir: directory}).tags()
+  return tags.latest
+}
+
+/**
+ * Remove a git remote from the given directory.
+ *
+ * @param directory - The directory where the git repository is located.
+ * @param remoteName - The name of the remote to remove (defaults to 'origin').
+ * @returns A promise that resolves when the remote is removed.
+ */
+export async function removeGitRemote(directory: string, remoteName = 'origin'): Promise<void> {
+  outputDebug(outputContent`Removing git remote ${remoteName} from ${outputToken.path(directory)}...`)
+  await ensureGitIsPresentOrAbort()
+
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  const repo = git(directory)
+
+  // Check if remote exists first
+  const remotes = await repo.getRemotes()
+  const remoteExists = remotes.some((remote: {name: string}) => remote.name === remoteName)
+
+  if (!remoteExists) {
+    outputDebug(outputContent`Remote ${remoteName} does not exist, no action needed`)
+    return
+  }
+
+  await repo.removeRemote(remoteName)
 }

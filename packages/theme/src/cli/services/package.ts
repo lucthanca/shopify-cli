@@ -7,8 +7,10 @@ import {parseJSON} from '@shopify/theme-check-node'
 
 const themeFilesPattern = [
   'assets/**',
+  'blocks/**',
   'config/**',
   'layout/**',
+  'listings/**/*',
   'locales/**',
   'sections/**',
   'snippets/**',
@@ -55,7 +57,7 @@ async function getThemePackageName(inputDirectory: string) {
 }
 
 async function getThemeInfo(settingsPath: string) {
-  const parsedSettings = parseJSON(await readFile(settingsPath), null)
+  const parsedSettings = parseJSON(await readFile(settingsPath), null, true)
 
   if (!parsedSettings) {
     throw new AbortError(

@@ -1,11 +1,10 @@
-import {buildAppURLForWeb} from '../../../utilities/app/app-url.js'
 import {validateUrl} from '../../app/validation/common.js'
 import {TransformationConfig, createConfigExtensionSpecification} from '../specification.js'
-import {outputContent, outputToken} from '@shopify/cli-kit/node/output'
+import {BaseSchemaWithoutHandle} from '../schemas.js'
 import {normalizeDelimitedString} from '@shopify/cli-kit/common/string'
 import {zod} from '@shopify/cli-kit/node/schema'
 
-const AppAccessSchema = zod.object({
+const AppAccessSchema = BaseSchemaWithoutHandle.extend({
   access: zod
     .object({
       admin: zod
@@ -47,9 +46,20 @@ const appAccessSpec = createConfigExtensionSpecification({
   identifier: AppAccessSpecIdentifier,
   schema: AppAccessSchema,
   transformConfig: AppAccessTransformConfig,
-  getDevSessionActionUpdateMessage: async (_, appConfig, storeFqdn) => {
-    const scopesURL = await buildAppURLForWeb(storeFqdn, appConfig.client_id)
-    return outputContent`Scopes updated. ${outputToken.link('Open app to accept scopes.', scopesURL)}`.value
+  getDevSessionUpdateMessages: async (config) => {
+    const scopesString = config.access_scopes?.scopes
+      ? config.access_scopes.scopes
+          .split(',')
+          .map((scope) => scope.trim())
+          .join(', ')
+      : config.access_scopes?.required_scopes?.join(', ')
+
+    return [scopesString ? `Access scopes auto-granted: ${scopesString}` : `App has been installed`]
+  },
+  patchWithAppDevURLs: (config, urls) => {
+    if (urls.redirectUrlWhitelist) {
+      config.auth = {redirect_urls: urls.redirectUrlWhitelist}
+    }
   },
 })
 

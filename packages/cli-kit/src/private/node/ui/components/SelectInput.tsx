@@ -29,6 +29,7 @@ export interface SelectInputProps<T> {
   availableLines?: number
   onSubmit?: (item: Item<T>) => void
   inputFixedAreaRef?: React.RefObject<DOMElement>
+  groupOrder?: string[]
 }
 
 export interface Item<T> {
@@ -45,7 +46,14 @@ function highlightedLabel(label: string, term: string | undefined) {
     return label
   }
 
-  const regex = new RegExp(term, 'i')
+  let regex
+  try {
+    regex = new RegExp(term, 'i')
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch (error) {
+    // term is user provided and could be an invalid regex at that moment (e.g. ending in '\')
+    return label
+  }
   return label.replace(regex, (match) => {
     return chalk.bold(match)
   })
@@ -142,6 +150,7 @@ function SelectInputInner<T>(
     availableLines = MAX_AVAILABLE_LINES,
     onSubmit,
     inputFixedAreaRef,
+    groupOrder,
   }: SelectInputProps<T>,
   ref: React.ForwardedRef<DOMElement>,
 ): JSX.Element | null {
@@ -154,7 +163,15 @@ function SelectInputInner<T>(
   }
 
   const hasAnyGroup = rawItems.some((item) => typeof item.group !== 'undefined')
-  const items = sortBy(rawItems, 'group')
+  const items = sortBy(rawItems, (item) => {
+    // Items without groups ("Other") always go last
+    if (!item.group) return Number.MAX_SAFE_INTEGER + 1
+    // If no groupOrder specified, use default behavior
+    if (!groupOrder) return Number.MAX_SAFE_INTEGER
+    // Items with groups get their position from groupOrder, or MAX_SAFE_INTEGER if not specified
+    const index = groupOrder.indexOf(item.group)
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index
+  })
   const itemsHaveKeys = items.some((item) => typeof item.key !== 'undefined' && item.key.length > 0)
 
   if (itemsHaveKeys) validateKeys(items)

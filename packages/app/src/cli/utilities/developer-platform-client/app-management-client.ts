@@ -4,6 +4,7 @@ import {
   OrganizationBetaFlagsQueryVariables,
   organizationBetaFlagsQuery,
 } from './app-management-client/graphql/organization_beta_flags.js'
+import {environmentVariableNames} from '../../constants.js'
 import {RemoteSpecification} from '../../api/graphql/extension_specifications.js'
 import {
   DeveloperPlatformClient,
@@ -13,10 +14,16 @@ import {
   AppDeployOptions,
   AssetUrlSchema,
   AppVersionIdentifiers,
-  DevSessionOptions,
   filterDisabledFlags,
   ClientName,
   AppModuleVersion,
+  CreateAppOptions,
+  AppLogsResponse,
+  createUnauthorizedHandler,
+  DevSessionUpdateOptions,
+  DevSessionCreateOptions,
+  DevSessionDeleteOptions,
+  UserError,
 } from '../developer-platform-client.js'
 import {PartnersSession} from '../../services/context/partner-account-info.js'
 import {
@@ -32,7 +39,6 @@ import {
   ExtensionRegistration,
 } from '../../api/graphql/all_app_extension_registrations.js'
 import {AppDeploySchema} from '../../api/graphql/app_deploy.js'
-import {FindStoreByDomainSchema} from '../../api/graphql/find_store_by_domain.js'
 import {AppVersionsQuerySchema as AppVersionsQuerySchemaInterface} from '../../api/graphql/get_versions_list.js'
 import {ExtensionCreateSchema, ExtensionCreateVariables} from '../../api/graphql/extension_create.js'
 import {
@@ -59,13 +65,12 @@ import {
 } from '../../api/graphql/extension_migrate_flow_extension.js'
 import {UpdateURLsSchema, UpdateURLsVariables} from '../../api/graphql/update_urls.js'
 import {CurrentAccountInfoSchema} from '../../api/graphql/current_account_info.js'
-import {ExtensionTemplate} from '../../models/app/template.js'
+import {ExtensionTemplate, ExtensionTemplatesResult} from '../../models/app/template.js'
 import {
   MigrateToUiExtensionVariables,
   MigrateToUiExtensionSchema,
 } from '../../api/graphql/extension_migrate_to_ui_extension.js'
 import {MigrateAppModuleSchema, MigrateAppModuleVariables} from '../../api/graphql/extension_migrate_app_module.js'
-import {AppLogsSubscribeVariables, AppLogsSubscribeResponse} from '../../api/graphql/subscribe_to_app_logs.js'
 import {
   ExtensionUpdateDraftMutation,
   ExtensionUpdateDraftMutationVariables,
@@ -73,11 +78,14 @@ import {
 import {ListOrganizations} from '../../api/graphql/business-platform-destinations/generated/organizations.js'
 import {AppHomeSpecIdentifier} from '../../models/extensions/specifications/app_config_app_home.js'
 import {BrandingSpecIdentifier} from '../../models/extensions/specifications/app_config_branding.js'
-import {WebhooksSpecIdentifier} from '../../models/extensions/specifications/app_config_webhook.js'
 import {AppAccessSpecIdentifier} from '../../models/extensions/specifications/app_config_app_access.js'
 import {CONFIG_EXTENSION_IDS} from '../../models/extensions/extension-instance.js'
 import {DevSessionCreate, DevSessionCreateMutation} from '../../api/graphql/app-dev/generated/dev-session-create.js'
-import {DevSessionUpdate, DevSessionUpdateMutation} from '../../api/graphql/app-dev/generated/dev-session-update.js'
+import {
+  DevSessionUpdate,
+  DevSessionUpdateMutation,
+  DevSessionUpdateMutationVariables,
+} from '../../api/graphql/app-dev/generated/dev-session-update.js'
 import {DevSessionDelete, DevSessionDeleteMutation} from '../../api/graphql/app-dev/generated/dev-session-delete.js'
 import {
   FetchDevStoreByDomain,
@@ -88,12 +96,20 @@ import {
   ListAppDevStoresQuery,
 } from '../../api/graphql/business-platform-organizations/generated/list_app_dev_stores.js'
 import {
-  ActiveAppRelease,
+  ProvisionShopAccess,
+  ProvisionShopAccessMutationVariables,
+} from '../../api/graphql/business-platform-organizations/generated/provision_shop_access.js'
+import {
   ActiveAppReleaseQuery,
   ReleasedAppModuleFragment,
 } from '../../api/graphql/app-management/generated/active-app-release.js'
+import {ActiveAppReleaseFromApiKey} from '../../api/graphql/app-management/generated/active-app-release-from-api-key.js'
 import {ReleaseVersion} from '../../api/graphql/app-management/generated/release-version.js'
-import {CreateAppVersion} from '../../api/graphql/app-management/generated/create-app-version.js'
+import {
+  CreateAppVersion,
+  CreateAppVersionMutation,
+  CreateAppVersionMutationVariables,
+} from '../../api/graphql/app-management/generated/create-app-version.js'
 import {CreateAssetUrl} from '../../api/graphql/app-management/generated/create-asset-url.js'
 import {AppVersionById} from '../../api/graphql/app-management/generated/app-version-by-id.js'
 import {AppVersions} from '../../api/graphql/app-management/generated/app-versions.js'
@@ -107,31 +123,52 @@ import {CliTesting} from '../../api/graphql/webhooks/generated/cli-testing.js'
 import {PublicApiVersions} from '../../api/graphql/webhooks/generated/public-api-versions.js'
 import {
   SchemaDefinitionByTarget,
-  SchemaDefinitionByTargetQuery,
   SchemaDefinitionByTargetQueryVariables,
 } from '../../api/graphql/functions/generated/schema-definition-by-target.js'
 import {
   SchemaDefinitionByApiType,
-  SchemaDefinitionByApiTypeQuery,
   SchemaDefinitionByApiTypeQueryVariables,
 } from '../../api/graphql/functions/generated/schema-definition-by-api-type.js'
-import {ensureAuthenticatedAppManagement, ensureAuthenticatedBusinessPlatform} from '@shopify/cli-kit/node/session'
+import {WebhooksSpecIdentifier} from '../../models/extensions/specifications/app_config_webhook.js'
+import {AppVersionByTag} from '../../api/graphql/app-management/generated/app-version-by-tag.js'
+import {AppLogData} from '../../services/app-logs/types.js'
+import {
+  AppLogsSubscribe,
+  AppLogsSubscribeMutation,
+  AppLogsSubscribeMutationVariables,
+} from '../../api/graphql/app-management/generated/app-logs-subscribe.js'
+import {SourceExtension} from '../../api/graphql/app-management/generated/types.js'
+import {getPartnersToken} from '@shopify/cli-kit/node/environment'
+import {ensureAuthenticatedAppManagementAndBusinessPlatform} from '@shopify/cli-kit/node/session'
 import {isUnitTest} from '@shopify/cli-kit/node/context/local'
 import {AbortError, BugError} from '@shopify/cli-kit/node/error'
-import {fetch} from '@shopify/cli-kit/node/http'
-import {appManagementRequestDoc} from '@shopify/cli-kit/node/api/app-management'
-import {appDevRequest} from '@shopify/cli-kit/node/api/app-dev'
+import {fetch, shopifyFetch, Response} from '@shopify/cli-kit/node/http'
+import {
+  appManagementRequestDoc,
+  appManagementAppLogsUrl,
+  appManagementHeaders,
+  AppManagementRequestOptions,
+} from '@shopify/cli-kit/node/api/app-management'
+import {appDevRequestDoc, AppDevRequestOptions} from '@shopify/cli-kit/node/api/app-dev'
 import {
   businessPlatformOrganizationsRequest,
   businessPlatformOrganizationsRequestDoc,
+  BusinessPlatformOrganizationsRequestOptions,
   businessPlatformRequestDoc,
+  BusinessPlatformRequestOptions,
 } from '@shopify/cli-kit/node/api/business-platform'
 import {CLI_KIT_VERSION} from '@shopify/cli-kit/common/version'
 import {versionSatisfies} from '@shopify/cli-kit/node/node-package-manager'
 import {outputDebug} from '@shopify/cli-kit/node/output'
 import {developerDashboardFqdn} from '@shopify/cli-kit/node/context/fqdn'
-import {webhooksRequest} from '@shopify/cli-kit/node/api/webhooks'
-import {functionsRequestDoc} from '@shopify/cli-kit/node/api/functions'
+import {TokenItem} from '@shopify/cli-kit/node/ui'
+import {functionsRequestDoc, FunctionsRequestOptions} from '@shopify/cli-kit/node/api/functions'
+import {fileExists, readFile} from '@shopify/cli-kit/node/fs'
+import {JsonMapType} from '@shopify/cli-kit/node/toml'
+import {isPreReleaseVersion} from '@shopify/cli-kit/node/version'
+import {UnauthorizedHandler} from '@shopify/cli-kit/node/api/graphql'
+import {Variables} from 'graphql-request'
+import {webhooksRequestDoc, WebhooksRequestOptions} from '@shopify/cli-kit/node/api/webhooks'
 
 const TEMPLATE_JSON_URL = 'https://cdn.shopify.com/static/cli/extensions/templates.json'
 
@@ -142,23 +179,81 @@ type ShopNode = Exclude<ShopEdge['node'], {[key: string]: never}>
 export interface GatedExtensionTemplate extends ExtensionTemplate {
   organizationBetaFlags?: string[]
   minimumCliVersion?: string
+  deprecatedFromCliVersion?: string
 }
 
 export class AppManagementClient implements DeveloperPlatformClient {
   public readonly clientName = ClientName.AppManagement
   public readonly webUiName = 'Developer Dashboard'
-  public readonly requiresOrganization = true
   public readonly supportsAtomicDeployments = true
   public readonly supportsDevSessions = true
+  public readonly supportsStoreSearch = true
+  public readonly organizationSource = OrganizationSource.BusinessPlatform
+  public readonly bundleFormat = 'br'
+  public readonly supportsDashboardManagedExtensions = false
   private _session: PartnersSession | undefined
-  private _businessPlatformToken: string | undefined
 
   constructor(session?: PartnersSession) {
     this._session = session
   }
 
-  async subscribeToAppLogs(input: AppLogsSubscribeVariables): Promise<AppLogsSubscribeResponse> {
-    throw new Error(`Not Implemented: ${JSON.stringify(input)}`)
+  async subscribeToAppLogs(
+    input: AppLogsSubscribeMutationVariables,
+    _organizationId: string,
+  ): Promise<AppLogsSubscribeMutation> {
+    return this.appManagementRequest<AppLogsSubscribeMutation, AppLogsSubscribeMutationVariables>({
+      query: AppLogsSubscribe,
+      variables: {
+        shopIds: input.shopIds,
+        apiKey: input.apiKey,
+      },
+    })
+  }
+
+  async appLogs(
+    options: {
+      jwtToken: string
+      cursor?: string
+      filters?: {
+        status?: string
+        source?: string
+      }
+    },
+    organizationId: string,
+  ): Promise<AppLogsResponse> {
+    const response = await fetchAppLogs({
+      organizationId,
+      jwtToken: options.jwtToken,
+      cursor: options.cursor,
+      filters: options.filters,
+    })
+
+    try {
+      const data = (await response.json()) as {
+        app_logs?: AppLogData[]
+        cursor?: string
+        errors?: string[]
+      }
+
+      if (!response.ok) {
+        return {
+          errors: data.errors ?? [`Request failed with status ${response.status}`],
+          status: response.status,
+        }
+      }
+
+      return {
+        app_logs: data.app_logs ?? [],
+        cursor: data.cursor,
+        status: response.status,
+      }
+      // eslint-disable-next-line no-catch-all/no-catch-all
+    } catch (error) {
+      return {
+        errors: [`Failed to parse response: ${error}`],
+        status: response.status,
+      }
+    }
   }
 
   async session(): Promise<PartnersSession> {
@@ -166,11 +261,43 @@ export class AppManagementClient implements DeveloperPlatformClient {
       if (isUnitTest()) {
         throw new Error('AppManagementClient.session() should not be invoked dynamically in a unit test')
       }
-      const userInfoResult = await businessPlatformRequestDoc(UserInfo, await this.businessPlatformToken())
-      const {token, userId} = await ensureAuthenticatedAppManagement()
-      if (userInfoResult.currentUserAccount) {
+
+      const tokenResult = await ensureAuthenticatedAppManagementAndBusinessPlatform()
+      const {appManagementToken, businessPlatformToken, userId} = tokenResult
+
+      // This one can't use the shared businessPlatformRequest because the token is not globally available yet.
+      const userInfoResult = await businessPlatformRequestDoc({
+        query: UserInfo,
+        cacheOptions: {
+          cacheTTL: {hours: 6},
+          cacheExtraKey: userId,
+        },
+        token: businessPlatformToken,
+        unauthorizedHandler: this.createUnauthorizedHandler(),
+      })
+
+      if (getPartnersToken() && userInfoResult.currentUserAccount) {
+        const organizations = userInfoResult.currentUserAccount.organizations.nodes.map((org) => ({
+          name: org.name,
+        }))
+
+        if (organizations.length > 1) {
+          throw new BugError('Multiple organizations found for the CLI token')
+        }
+
         this._session = {
-          token,
+          token: appManagementToken,
+          businessPlatformToken,
+          accountInfo: {
+            type: 'ServiceAccount',
+            orgName: organizations[0]?.name ?? 'Unknown organization',
+          },
+          userId,
+        }
+      } else if (userInfoResult.currentUserAccount) {
+        this._session = {
+          token: appManagementToken,
+          businessPlatformToken,
           accountInfo: {
             type: 'UserAccount',
             email: userInfoResult.currentUserAccount.email,
@@ -179,7 +306,8 @@ export class AppManagementClient implements DeveloperPlatformClient {
         }
       } else {
         this._session = {
-          token,
+          token: appManagementToken,
+          businessPlatformToken,
           accountInfo: {
             type: 'UnknownAccount',
           },
@@ -194,31 +322,25 @@ export class AppManagementClient implements DeveloperPlatformClient {
     return (await this.session()).token
   }
 
-  async refreshToken(): Promise<string> {
-    const {token} = await ensureAuthenticatedAppManagement([], process.env, {noPrompt: true})
-    const session = await this.session()
-    if (token) {
-      session.token = token
-    }
-    return session.token
+  async businessPlatformToken(): Promise<string> {
+    return (await this.session()).businessPlatformToken
   }
 
-  async businessPlatformToken(): Promise<string> {
-    if (isUnitTest()) {
-      throw new Error('AppManagementClient.businessPlatformToken() should not be invoked dynamically in a unit test')
-    }
-    if (!this._businessPlatformToken) {
-      this._businessPlatformToken = await ensureAuthenticatedBusinessPlatform()
-    }
-    return this._businessPlatformToken
+  async unsafeRefreshToken(): Promise<string> {
+    const result = await ensureAuthenticatedAppManagementAndBusinessPlatform({noPrompt: true, forceRefresh: true})
+    const session = await this.session()
+    session.token = result.appManagementToken
+    session.businessPlatformToken = result.businessPlatformToken
+
+    return session.token
   }
 
   async accountInfo(): Promise<PartnersSession['accountInfo']> {
     return (await this.session()).accountInfo
   }
 
-  async appFromId(appIdentifiers: MinimalAppIdentifiers): Promise<OrganizationApp | undefined> {
-    const {app} = await this.activeAppVersionRawResult(appIdentifiers)
+  async appFromIdentifiers(apiKey: string): Promise<OrganizationApp | undefined> {
+    const {app} = await this.activeAppVersionRawResult(apiKey)
     const {name, appModules} = app.activeRelease.version
     const appAccessModule = appModules.find((mod) => mod.specification.externalIdentifier === 'app_access')
     const appHomeModule = appModules.find((mod) => mod.specification.externalIdentifier === 'app_home')
@@ -228,7 +350,7 @@ export class AppManagementClient implements DeveloperPlatformClient {
       title: name,
       apiKey: app.key,
       apiSecretKeys,
-      organizationId: appIdentifiers.organizationId,
+      organizationId: String(numberFromGid(app.organizationId)),
       grantedScopes: (appAccessModule?.config?.scopes as string[] | undefined) ?? [],
       applicationUrl: appHomeModule?.config?.app_url as string | undefined,
       flags: [],
@@ -237,23 +359,23 @@ export class AppManagementClient implements DeveloperPlatformClient {
   }
 
   async organizations(): Promise<Organization[]> {
-    const organizationsResult = await businessPlatformRequestDoc(ListOrganizations, await this.businessPlatformToken())
+    const organizationsResult = await this.businessPlatformRequest({query: ListOrganizations})
     if (!organizationsResult.currentUserAccount) return []
-    return organizationsResult.currentUserAccount.organizations.nodes.map((org) => ({
+    return organizationsResult.currentUserAccount.organizationsWithAccessToDestination.nodes.map((org) => ({
       id: idFromEncodedGid(org.id),
-      businessName: org.name,
-      source: OrganizationSource.BusinessPlatform,
+      businessName: `${org.name} (Dev Dashboard)`,
+      source: this.organizationSource,
     }))
   }
 
   async orgFromId(orgId: string): Promise<Organization | undefined> {
-    const base64Id = encodedGidFromId(orgId)
+    const base64Id = encodedGidFromOrganizationIdForBP(orgId)
     const variables = {organizationId: base64Id}
-    const organizationResult = await businessPlatformRequestDoc(
-      FindOrganizations,
-      await this.businessPlatformToken(),
+    const organizationResult = await this.businessPlatformRequest({
+      query: FindOrganizations,
       variables,
-    )
+      cacheOptions: {cacheTTL: {hours: 6}},
+    })
     const org = organizationResult.currentUserAccount?.organization
     if (!org) {
       return
@@ -261,7 +383,7 @@ export class AppManagementClient implements DeveloperPlatformClient {
     return {
       id: orgId,
       businessName: org.name,
-      source: OrganizationSource.BusinessPlatform,
+      source: this.organizationSource,
     }
   }
 
@@ -283,8 +405,9 @@ export class AppManagementClient implements DeveloperPlatformClient {
         .filter((word) => word)
         .map((word) => `title:${word}`)
         .join(' '),
+      organizationId,
     }
-    const result = await appManagementRequestDoc(organizationId, query, await this.token(), variables)
+    const result = await this.appManagementRequest({query, variables})
     if (!result.appsConnection) {
       throw new BugError('Server failed to retrieve apps')
     }
@@ -305,7 +428,8 @@ export class AppManagementClient implements DeveloperPlatformClient {
 
   async specifications({organizationId}: MinimalAppIdentifiers): Promise<RemoteSpecification[]> {
     const query = FetchSpecifications
-    const result = await appManagementRequestDoc(organizationId, query, await this.token())
+    const variables = {organizationId: gidFromOrganizationIdForShopify(organizationId)}
+    const result = await this.appManagementRequest({query, variables})
     return result.specifications.map(
       (spec): RemoteSpecification => ({
         name: spec.name,
@@ -316,6 +440,7 @@ export class AppManagementClient implements DeveloperPlatformClient {
         options: {
           managementExperience: 'cli',
           registrationLimit: spec.uidStrategy.appModuleLimit,
+          uidIsClientProvided: spec.uidStrategy.isClientProvided,
         },
         experience: experience(spec.identifier),
         validationSchema: spec.validationSchema,
@@ -323,50 +448,69 @@ export class AppManagementClient implements DeveloperPlatformClient {
     )
   }
 
-  async templateSpecifications({organizationId}: MinimalAppIdentifiers): Promise<ExtensionTemplate[]> {
-    let response
+  async templateSpecifications({organizationId}: MinimalAppIdentifiers): Promise<ExtensionTemplatesResult> {
     let templates: GatedExtensionTemplate[]
-    try {
-      response = await fetch(TEMPLATE_JSON_URL)
-      templates = await (response.json() as Promise<GatedExtensionTemplate[]>)
-    } catch (_e) {
-      throw new AbortError(
-        [
+    const {templatesJsonPath} = environmentVariableNames
+    const overrideFile = process.env[templatesJsonPath]
+    if (overrideFile) {
+      if (!(await fileExists(overrideFile))) {
+        throw new AbortError('There is no file at the path specified for template specifications')
+      }
+      const templatesJson = await readFile(overrideFile)
+      templates = JSON.parse(templatesJson)
+    } else {
+      try {
+        const response = await fetch(TEMPLATE_JSON_URL)
+        templates = await (response.json() as Promise<GatedExtensionTemplate[]>)
+      } catch (_e) {
+        throw new AbortError([
           'Failed to fetch extension templates from',
           {link: {url: TEMPLATE_JSON_URL}},
           {char: '.'},
           'This likely means a problem with your internet connection.',
-        ],
-        [
-          {link: {url: 'https://www.githubstatus.com', label: 'Check if GitHub is experiencing downtime'}},
-          'or try again later.',
-        ],
-      )
+        ])
+      }
     }
     // Fake the sortPriority as ascending, since the templates are already sorted
     // in the static JSON file. This can be removed once PartnersClient, which
     // uses sortPriority, is gone.
     let counter = 0
-    return (
+    const filteredTemplates = (
       await allowedTemplates(templates, async (betaFlags: string[]) =>
         this.organizationBetaFlags(organizationId, betaFlags),
       )
     ).map((template) => ({...template, sortPriority: counter++}))
+
+    // Extract group order from the original template order (before filtering)
+    const groupOrder: string[] = []
+    for (const template of templates) {
+      if (template.group && !groupOrder.includes(template.group)) {
+        groupOrder.push(template.group)
+      }
+    }
+    return {
+      templates: filteredTemplates,
+      groupOrder,
+    }
   }
 
-  async createApp(
-    org: Organization,
-    name: string,
-    options?: {
-      isLaunchable?: boolean
-      scopesArray?: string[]
-      directory?: string
-    },
-  ): Promise<OrganizationApp> {
-    const variables = createAppVars(name, options?.isLaunchable, options?.scopesArray)
+  async createApp(org: Organization, options: CreateAppOptions): Promise<OrganizationApp> {
+    // Query for latest api version
+    const apiVersions = await this.apiVersions(org.id)
+    const apiVersion =
+      apiVersions.publicApiVersions
+        .filter((version) => version !== 'unstable')
+        .sort()
+        .at(-1) ?? 'unstable'
+
+    const variables = createAppVars(options, org.id, apiVersion)
 
     const mutation = CreateApp
-    const result = await appManagementRequestDoc(org.id, mutation, await this.token(), variables)
+    const result = await this.appManagementRequest({
+      query: mutation,
+      variables,
+    })
+
     if (!result.appCreate.app || result.appCreate.userErrors?.length > 0) {
       const errors = result.appCreate.userErrors.map((error) => error.message).join(', ')
       throw new AbortError(errors)
@@ -375,11 +519,12 @@ export class AppManagementClient implements DeveloperPlatformClient {
     // Need to figure this out still
     const flags = filterDisabledFlags([])
     const createdApp = result.appCreate.app
+    const apiSecretKeys = createdApp.activeRoot.clientCredentials.secrets.map((secret) => ({secret: secret.key}))
     return {
       ...createdApp,
-      title: name,
+      title: options.name,
       apiKey: createdApp.key,
-      apiSecretKeys: [],
+      apiSecretKeys,
       grantedScopes: options?.scopesArray ?? [],
       organizationId: org.id,
       newApp: true,
@@ -391,12 +536,12 @@ export class AppManagementClient implements DeveloperPlatformClient {
   // we are returning OrganizationStore type here because we want to keep types consistent btwn
   // partners-client and app-management-client. Since we need transferDisabled and convertableToPartnerTest values
   // from the Partners OrganizationStore schema, we will return this type for now
-  async devStoresForOrg(orgId: string): Promise<OrganizationStore[]> {
-    const storesResult = await businessPlatformOrganizationsRequestDoc<ListAppDevStoresQuery>(
-      ListAppDevStores,
-      await this.businessPlatformToken(),
-      orgId,
-    )
+  async devStoresForOrg(orgId: string, searchTerm?: string): Promise<Paginateable<{stores: OrganizationStore[]}>> {
+    const storesResult = await this.businessPlatformOrganizationsRequest({
+      query: ListAppDevStores,
+      organizationId: String(numberFromGid(orgId)),
+      variables: {searchTerm},
+    })
     const organization = storesResult.organization
 
     if (!organization) {
@@ -404,63 +549,78 @@ export class AppManagementClient implements DeveloperPlatformClient {
     }
 
     const shopArray = organization.accessibleShops?.edges.map((value) => value.node) ?? []
-    return mapBusinessPlatformStoresToOrganizationStores(shopArray)
+    const provisionable = isStoreProvisionable(organization.currentUser?.organizationPermissions ?? [])
+    return {
+      stores: mapBusinessPlatformStoresToOrganizationStores(shopArray, provisionable),
+      hasMorePages: storesResult.organization?.accessibleShops?.pageInfo.hasNextPage ?? false,
+    }
   }
 
   async appExtensionRegistrations(
     appIdentifiers: MinimalAppIdentifiers,
     activeAppVersion?: AppVersion,
   ): Promise<AllAppExtensionRegistrationsQuerySchema> {
-    const app = activeAppVersion || (await this.activeAppVersion(appIdentifiers))
+    const app = activeAppVersion ?? (await this.activeAppVersion(appIdentifiers))
 
     const configurationRegistrations: ExtensionRegistration[] = []
     const extensionRegistrations: ExtensionRegistration[] = []
+    const dashboardManagedExtensionRegistrations: ExtensionRegistration[] = []
     app.appModuleVersions.forEach((mod) => {
       const registration = {
         id: mod.registrationId,
         uuid: mod.registrationUuid!,
         title: mod.registrationTitle,
         type: mod.type,
+        activeVersion: mod.config
+          ? {
+              config: JSON.stringify(mod.config),
+              ...(mod.target && {context: mod.target}),
+            }
+          : undefined,
       }
       if (CONFIG_EXTENSION_IDS.includes(registration.id)) {
         configurationRegistrations.push(registration)
+      } else if (mod.specification?.options?.managementExperience === 'dashboard') {
+        dashboardManagedExtensionRegistrations.push(registration)
       } else {
         extensionRegistrations.push(registration)
       }
     })
     return {
       app: {
-        dashboardManagedExtensionRegistrations: [],
+        dashboardManagedExtensionRegistrations,
         configurationRegistrations,
         extensionRegistrations,
       },
     }
   }
 
-  async appVersions({id, organizationId, title}: OrganizationApp): Promise<AppVersionsQuerySchemaInterface> {
+  async appVersions({id, organizationId, title}: MinimalOrganizationApp): Promise<AppVersionsQuerySchemaInterface> {
     const query = AppVersions
     const variables = {appId: id}
-    const result = await appManagementRequestDoc(organizationId, query, await this.token(), variables)
+    const result = await this.appManagementRequest({query, variables})
     return {
       app: {
         id: result.app.id,
         organizationId,
         title,
         appVersions: {
-          nodes: result.versions.map((version) => {
-            return {
-              createdAt: version.createdAt,
-              createdBy: {
-                displayName: version.createdBy,
-              },
-              versionTag: version.metadata.versionTag,
-              status: version.id === result.app.activeRelease.version.id ? 'active' : 'inactive',
-              versionId: version.id,
-              message: version.metadata.message,
-            }
-          }),
+          nodes:
+            result.app.versions?.edges.map((edge) => {
+              const version = edge.node
+              return {
+                createdAt: version.createdAt,
+                createdBy: {
+                  displayName: version.createdBy,
+                },
+                versionTag: version.metadata.versionTag,
+                status: version.id === result.app.activeRelease.version.id ? 'active' : 'inactive',
+                versionId: version.id,
+                message: version.metadata.message,
+              }
+            }) ?? [],
           pageInfo: {
-            totalResults: result.versions.length,
+            totalResults: result.app.versionsCount,
           },
         },
       },
@@ -468,32 +628,24 @@ export class AppManagementClient implements DeveloperPlatformClient {
   }
 
   async appVersionByTag(
-    {id: appId, apiKey, organizationId}: MinimalOrganizationApp,
-    tag: string,
+    {id: appId, organizationId}: MinimalOrganizationApp,
+    versionTag: string,
   ): Promise<AppVersionWithContext> {
-    const query = AppVersions
-    const variables = {appId}
-    const result = await appManagementRequestDoc(organizationId, query, await this.token(), variables)
-    if (!result.app) {
-      throw new AbortError(`App not found for API key: ${apiKey}`)
-    }
-    const version = result.versions.find((version) => version.metadata.versionTag === tag)
+    const query = AppVersionByTag
+    const variables = {versionTag}
+    const result = await this.appManagementRequest({query, variables})
+    const version = result.versionByTag
     if (!version) {
-      throw new AbortError(`Version not found for tag: ${tag}`)
+      throw new AbortError(`Version not found for tag: ${versionTag}`)
     }
-
-    const query2 = AppVersionById
-    const variables2 = {versionId: version.id}
-    const result2 = await appManagementRequestDoc(organizationId, query2, await this.token(), variables2)
-    const versionInfo = result2.version
 
     return {
-      id: parseInt(versionInfo.id, 10),
-      uuid: versionInfo.id,
-      versionTag: versionInfo.metadata.versionTag,
-      location: [await appDeepLink({organizationId, id: appId}), 'versions', numberFromGid(versionInfo.id)].join('/'),
-      message: versionInfo.metadata.message ?? '',
-      appModuleVersions: versionInfo.appModules.map(appModuleVersion),
+      id: parseInt(version.id, 10),
+      uuid: version.id,
+      versionTag: version.metadata.versionTag,
+      location: [await appDeepLink({organizationId, id: appId}), 'versions', numberFromGid(version.id)].join('/'),
+      message: version.metadata.message ?? '',
+      appModuleVersions: version.appModules.map(appModuleVersion),
     }
   }
 
@@ -503,8 +655,8 @@ export class AppManagementClient implements DeveloperPlatformClient {
   ): Promise<AppVersionsDiffSchema> {
     const variables = {versionId}
     const [currentVersion, selectedVersion] = await Promise.all([
-      this.activeAppVersionRawResult(app),
-      appManagementRequestDoc(app.organizationId, AppVersionById, await this.token(), variables),
+      this.activeAppVersionRawResult(app.apiKey),
+      this.appManagementRequest({query: AppVersionById, variables}),
     ])
     const currentModules = currentVersion.app.activeRelease.version.appModules
     const selectedVersionModules = selectedVersion.version.appModules
@@ -536,7 +688,7 @@ export class AppManagementClient implements DeveloperPlatformClient {
   }
 
   async activeAppVersion(app: MinimalAppIdentifiers): Promise<AppVersion> {
-    const result = await this.activeAppVersionRawResult(app)
+    const result = await this.activeAppVersionRawResult(app.apiKey)
     return {
       appModuleVersions: result.app.activeRelease.version.appModules.map(appModuleVersion),
       ...result.app.activeRelease,
@@ -544,7 +696,15 @@ export class AppManagementClient implements DeveloperPlatformClient {
   }
 
   async generateSignedUploadUrl({organizationId}: MinimalAppIdentifiers): Promise<AssetUrlSchema> {
-    const result = await appManagementRequestDoc(organizationId, CreateAssetUrl, await this.token())
+    const variables = {
+      sourceExtension: 'BR' as SourceExtension,
+      organizationId: gidFromOrganizationIdForShopify(organizationId),
+    }
+    const result = await this.appManagementRequest({
+      query: CreateAssetUrl,
+      variables,
+      cacheOptions: {cacheTTL: {minutes: 59}},
+    })
     return {
       assetUrl: result.appRequestSourceUploadUrl.sourceUploadUrl,
       userErrors: result.appRequestSourceUploadUrl.userErrors,
@@ -556,45 +716,30 @@ export class AppManagementClient implements DeveloperPlatformClient {
   }
 
   async deploy({
+    appManifest,
     appId,
-    name,
-    appModules,
     organizationId,
     versionTag,
     message,
+    commitReference,
     bundleUrl,
     skipPublish: noRelease,
   }: AppDeployOptions): Promise<AppDeploySchema> {
-    // `name` is from the package.json package name or the directory name, while
-    // the branding module reflects the current specified name in the TOML.
-    // Since it is technically valid to not have a branding module, we will default
-    // to the `name` if no branding module is present.
-    let updatedName = name
-    const brandingModule = appModules?.find((mod) => mod.specificationIdentifier === BrandingSpecIdentifier)
-    if (brandingModule) {
-      updatedName = JSON.parse(brandingModule.config).name
-    }
+    const metadata = {versionTag, message, sourceControlUrl: commitReference}
+    const queryVersion: CreateAppVersionMutationVariables['version'] = bundleUrl
+      ? {sourceUrl: bundleUrl}
+      : {source: appManifest}
 
-    const variables = {
-      appId,
-      name: updatedName,
-      appSource: {
-        assetsUrl: bundleUrl,
-        appModules: (appModules ?? []).map((mod) => {
-          return {
-            uid: mod.uid ?? mod.uuid ?? mod.handle,
-            specificationIdentifier: mod.specificationIdentifier,
-            handle: mod.handle,
-            config: JSON.parse(mod.config),
-          }
-        }),
-      },
-      metadata: {versionTag, message},
-    }
+    const variables: CreateAppVersionMutationVariables = {appId, version: queryVersion, metadata}
 
-    const result = await appManagementRequestDoc(organizationId, CreateAppVersion, await this.token(), variables)
-    const {version, userErrors} = result.appVersionCreate
-    if (!version) return {appDeploy: {userErrors}} as unknown as AppDeploySchema
+    const result = await this.appManagementRequest({
+      query: CreateAppVersion,
+      variables,
+      requestOptions: {requestMode: 'slow-request'},
+    })
+    const {version} = result.appVersionCreate
+    const userErrors = result.appVersionCreate.userErrors.map(toUserError) ?? []
+    if (!version) return {appDeploy: {userErrors}}
 
     const versionResult = {
       appDeploy: {
@@ -613,21 +758,19 @@ export class AppManagementClient implements DeveloperPlatformClient {
           }),
           message: version.metadata.message,
         },
-        userErrors: userErrors?.map((err) => ({...err, details: []})),
+        userErrors,
       },
     }
     if (noRelease) return versionResult
 
     const releaseVariables = {appId, versionId: version.id}
-    const releaseResult = await appManagementRequestDoc(
-      organizationId,
-      ReleaseVersion,
-      await this.token(),
-      releaseVariables,
-    )
-    if (releaseResult.appReleaseCreate?.userErrors) {
+    const releaseResult = await this.appManagementRequest({
+      query: ReleaseVersion,
+      variables: releaseVariables,
+    })
+    if (releaseResult.appReleaseCreate.userErrors) {
       versionResult.appDeploy.userErrors = (versionResult.appDeploy.userErrors ?? []).concat(
-        releaseResult.appReleaseCreate.userErrors.map((err) => ({...err, details: []})),
+        releaseResult.appReleaseCreate.userErrors.map(toUserError),
       )
     }
 
@@ -642,47 +785,48 @@ export class AppManagementClient implements DeveloperPlatformClient {
     version: AppVersionIdentifiers
   }): Promise<AppReleaseSchema> {
     const releaseVariables = {appId, versionId}
-    const releaseResult = await appManagementRequestDoc(
-      organizationId,
-      ReleaseVersion,
-      await this.token(),
-      releaseVariables,
-    )
-    if (!releaseResult.appReleaseCreate?.release) {
-      throw new AbortError('Failed to release version')
-    }
-    return {
-      appRelease: {
-        appVersion: {
-          versionTag: releaseResult.appReleaseCreate.release.version.metadata.versionTag,
-          message: releaseResult.appReleaseCreate.release.version.metadata.message,
-          location: [
-            await appDeepLink({organizationId, id: appId}),
-            'versions',
-            numberFromGid(releaseResult.appReleaseCreate.release.version.id),
-          ].join('/'),
+    const releaseResult = await this.appManagementRequest({
+      query: ReleaseVersion,
+      variables: releaseVariables,
+    })
+
+    if (releaseResult.appReleaseCreate.release) {
+      return {
+        appRelease: {
+          appVersion: {
+            versionTag: releaseResult.appReleaseCreate.release.version.metadata.versionTag,
+            message: releaseResult.appReleaseCreate.release.version.metadata.message,
+            location: [
+              await appDeepLink({organizationId, id: appId}),
+              'versions',
+              numberFromGid(releaseResult.appReleaseCreate.release.version.id).toString(),
+            ].join('/'),
+          },
         },
-        userErrors: releaseResult.appReleaseCreate.userErrors?.map((err) => ({
-          field: err.field,
-          message: err.message,
-          category: '',
-          details: [],
-        })),
-      },
+      }
+    } else {
+      return {
+        appRelease: {
+          userErrors:
+            releaseResult.appReleaseCreate.userErrors?.map((err) => ({
+              field: err.field,
+              message: err.message,
+              category: err.category,
+              details: [],
+              on: err.on,
+            })) ?? [],
+        },
+      }
     }
   }
 
-  // we are using FindStoreByDomainSchema type here because we want to keep types consistent btwn
-  // partners-client and app-management-client. Since we need transferDisabled and convertableToPartnerTest values
-  // from the Partners FindByStoreDomainSchema, we will return this type for now
-  async storeByDomain(orgId: string, shopDomain: string): Promise<FindStoreByDomainSchema> {
+  async storeByDomain(orgId: string, shopDomain: string): Promise<OrganizationStore | undefined> {
     const queryVariables: FetchDevStoreByDomainQueryVariables = {domain: shopDomain}
-    const storesResult = await businessPlatformOrganizationsRequestDoc(
-      FetchDevStoreByDomain,
-      await this.businessPlatformToken(),
-      orgId,
-      queryVariables,
-    )
+    const storesResult = await this.businessPlatformOrganizationsRequest({
+      query: FetchDevStoreByDomain,
+      organizationId: String(numberFromGid(orgId)),
+      variables: queryVariables,
+    })
 
     const organization = storesResult.organization
 
@@ -691,20 +835,31 @@ export class AppManagementClient implements DeveloperPlatformClient {
     }
 
     const bpStoresArray = organization.accessibleShops?.edges.map((value) => value.node) ?? []
-    const storesArray = mapBusinessPlatformStoresToOrganizationStores(bpStoresArray)
+    const provisionable = isStoreProvisionable(organization.currentUser?.organizationPermissions ?? [])
+    const storesArray = mapBusinessPlatformStoresToOrganizationStores(bpStoresArray, provisionable)
+    return storesArray[0]
+  }
 
-    return {
-      organizations: {
-        nodes: [
-          {
-            id: organization.id,
-            businessName: organization.name,
-            stores: {
-              nodes: storesArray,
-            },
-          },
-        ],
-      },
+  async ensureUserAccessToStore(orgId: string, store: OrganizationStore): Promise<void> {
+    if (!store.provisionable) {
+      return
+    }
+    const encodedShopId = encodedGidFromShopId(store.shopId)
+    const variables: ProvisionShopAccessMutationVariables = {
+      input: {shopifyShopId: encodedShopId},
+    }
+
+    const fullResult = await businessPlatformOrganizationsRequestDoc({
+      query: ProvisionShopAccess,
+      token: await this.businessPlatformToken(),
+      organizationId: String(numberFromGid(orgId)),
+      variables,
+      unauthorizedHandler: this.createUnauthorizedHandler(),
+    })
+    const provisionResult = fullResult.organizationUserProvisionShopAccess
+    if (!provisionResult.success) {
+      const errorMessages = provisionResult.userErrors?.map((error) => error.message).join(', ') ?? ''
+      throw new BugError(`Failed to provision user access to store: ${errorMessages}`)
     }
   }
 
@@ -738,7 +893,7 @@ export class AppManagementClient implements DeveloperPlatformClient {
       sharedSecret: input.shared_secret,
       topic: input.topic,
     }
-    const result = await webhooksRequest(organizationId, query, await this.token(), variables)
+    const result = await this.webhooksRequest({organizationId, query, variables})
     let sendSampleWebhook: SampleWebhook = {samplePayload: '{}', headers: '{}', success: false, userErrors: []}
     const cliTesting = result.cliTesting
     if (cliTesting) {
@@ -753,7 +908,7 @@ export class AppManagementClient implements DeveloperPlatformClient {
   }
 
   async apiVersions(organizationId: string): Promise<PublicApiVersionsSchema> {
-    const result = await webhooksRequest(organizationId, PublicApiVersions, await this.token(), {})
+    const result = await this.webhooksRequest({organizationId, query: PublicApiVersions, variables: {}})
     return {publicApiVersions: result.publicApiVersions.map((version) => version.handle)}
   }
 
@@ -763,7 +918,7 @@ export class AppManagementClient implements DeveloperPlatformClient {
   ): Promise<WebhookTopicsSchema> {
     const query = AvailableTopics
     const variables = {apiVersion}
-    const result = await webhooksRequest(organizationId, query, await this.token(), variables)
+    const result = await this.webhooksRequest({organizationId, query, variables})
 
     return {
       webhookTopics: result.availableTopics ?? [],
@@ -789,23 +944,21 @@ export class AppManagementClient implements DeveloperPlatformClient {
 
   async targetSchemaDefinition(
     input: SchemaDefinitionByTargetQueryVariables,
-    _apiKey: string,
+    apiKey: string,
     organizationId: string,
-    appId?: string,
   ): Promise<string | null> {
     try {
-      const appIdNumber = String(numberFromGid(appId!))
-      const token = await this.token()
-      const result = await functionsRequestDoc<SchemaDefinitionByTargetQuery, SchemaDefinitionByTargetQueryVariables>(
+      const {app} = await this.activeAppVersionRawResult(apiKey)
+      const appIdNumber = String(numberFromGid(app.id))
+      const result = await this.functionsRequest({
         organizationId,
-        SchemaDefinitionByTarget,
-        token,
-        appIdNumber,
-        {
+        query: SchemaDefinitionByTarget,
+        appId: appIdNumber,
+        variables: {
           handle: input.handle,
           version: input.version,
         },
-      )
+      })
 
       return result?.target?.api?.schema?.definition ?? null
     } catch (error) {
@@ -815,20 +968,18 @@ export class AppManagementClient implements DeveloperPlatformClient {
 
   async apiSchemaDefinition(
     input: SchemaDefinitionByApiTypeQueryVariables,
-    _apiKey: string,
+    apiKey: string,
     organizationId: string,
-    appId?: string,
   ): Promise<string | null> {
     try {
-      const appIdNumber = String(numberFromGid(appId!))
-      const token = await this.token()
-      const result = await functionsRequestDoc<SchemaDefinitionByApiTypeQuery, SchemaDefinitionByApiTypeQueryVariables>(
+      const {app} = await this.activeAppVersionRawResult(apiKey)
+      const appIdNumber = String(numberFromGid(app.id))
+      const result = await this.functionsRequest({
         organizationId,
-        SchemaDefinitionByApiType,
-        token,
-        appIdNumber,
-        input,
-      )
+        query: SchemaDefinitionByApiType,
+        appId: appIdNumber,
+        variables: input,
+      })
 
       return result?.api?.schema?.definition ?? null
     } catch (error) {
@@ -848,49 +999,144 @@ export class AppManagementClient implements DeveloperPlatformClient {
     return appDeepLink({id, organizationId})
   }
 
-  async devSessionCreate({appId, assetsUrl, shopFqdn}: DevSessionOptions): Promise<DevSessionCreateMutation> {
+  async devSessionCreate({appId, assetsUrl, shopFqdn}: DevSessionCreateOptions): Promise<DevSessionCreateMutation> {
     const appIdNumber = String(numberFromGid(appId))
-    return appDevRequest(DevSessionCreate, shopFqdn, await this.token(), {appId: appIdNumber, assetsUrl})
+    return this.appDevRequest({
+      query: DevSessionCreate,
+      shopFqdn,
+      variables: {appId: appIdNumber, assetsUrl: assetsUrl ?? ''},
+    })
   }
 
-  async devSessionUpdate({appId, assetsUrl, shopFqdn}: DevSessionOptions): Promise<DevSessionUpdateMutation> {
+  async devSessionUpdate({
+    appId,
+    assetsUrl,
+    shopFqdn,
+    manifest,
+    inheritedModuleUids,
+  }: DevSessionUpdateOptions): Promise<DevSessionUpdateMutation> {
     const appIdNumber = String(numberFromGid(appId))
-    return appDevRequest(DevSessionUpdate, shopFqdn, await this.token(), {appId: appIdNumber, assetsUrl})
+    const variables: DevSessionUpdateMutationVariables = {
+      appId: appIdNumber,
+      assetsUrl,
+      manifest: JSON.stringify(manifest),
+      inheritedModuleUids,
+    }
+    return this.appDevRequest({query: DevSessionUpdate, shopFqdn, variables})
   }
 
-  async devSessionDelete({appId, shopFqdn}: Omit<DevSessionOptions, 'assetsUrl'>): Promise<DevSessionDeleteMutation> {
+  async devSessionDelete({appId, shopFqdn}: DevSessionDeleteOptions): Promise<DevSessionDeleteMutation> {
     const appIdNumber = String(numberFromGid(appId))
-    return appDevRequest(DevSessionDelete, shopFqdn, await this.token(), {appId: appIdNumber})
+    return this.appDevRequest({query: DevSessionDelete, shopFqdn, variables: {appId: appIdNumber}})
   }
 
-  async getCreateDevStoreLink(orgId: string): Promise<string> {
-    const url = `https://${await developerDashboardFqdn()}/dashboard/${orgId}/stores`
-    return (
-      `Looks like you don't have a dev store in the organization you selected. ` +
-      `Keep going — create a dev store on the Developer Dashboard:\n${url}\n`
-    )
+  async getCreateDevStoreLink(org: Organization): Promise<TokenItem> {
+    const url = `https://${await developerDashboardFqdn()}/dashboard/${org.id}/stores`
+    return [
+      `Looks like you don't have any dev stores associated with ${org.businessName}'s Dev Dashboard.`,
+      {link: {url, label: 'Create one now'}},
+    ]
   }
 
-  private async activeAppVersionRawResult({id, organizationId}: MinimalAppIdentifiers): Promise<ActiveAppReleaseQuery> {
-    return appManagementRequestDoc(organizationId, ActiveAppRelease, await this.token(), {appId: id})
+  private async activeAppVersionRawResult(apiKey: string): Promise<ActiveAppReleaseQuery> {
+    return this.appManagementRequest({query: ActiveAppReleaseFromApiKey, variables: {apiKey}})
   }
 
   private async organizationBetaFlags(
     organizationId: string,
     allBetaFlags: string[],
   ): Promise<{[flag: (typeof allBetaFlags)[number]]: boolean}> {
-    const variables: OrganizationBetaFlagsQueryVariables = {organizationId: encodedGidFromId(organizationId)}
-    const flagsResult = await businessPlatformOrganizationsRequest<OrganizationBetaFlagsQuerySchema>(
-      organizationBetaFlagsQuery(allBetaFlags),
-      await this.businessPlatformToken(),
+    const variables: OrganizationBetaFlagsQueryVariables = {
+      organizationId: encodedGidFromOrganizationIdForBP(organizationId),
+    }
+    const flagsResult = await businessPlatformOrganizationsRequest<OrganizationBetaFlagsQuerySchema>({
+      query: organizationBetaFlagsQuery(allBetaFlags),
+      token: await this.businessPlatformToken(),
       organizationId,
       variables,
-    )
+      unauthorizedHandler: this.createUnauthorizedHandler(),
+    })
     const result: {[flag: (typeof allBetaFlags)[number]]: boolean} = {}
     allBetaFlags.forEach((flag) => {
       result[flag] = Boolean(flagsResult.organization[`flag_${flag}`])
     })
     return result
+  }
+
+  private async appManagementRequest<TResult, TVariables extends Variables>(
+    options: Omit<AppManagementRequestOptions<TResult, TVariables>, 'unauthorizedHandler' | 'token'>,
+  ): Promise<TResult> {
+    return appManagementRequestDoc({
+      ...options,
+      token: await this.token(),
+      unauthorizedHandler: this.createUnauthorizedHandler(),
+    })
+  }
+
+  private async appDevRequest<TResult, TVariables extends Variables>(
+    options: Omit<AppDevRequestOptions<TResult, TVariables>, 'unauthorizedHandler' | 'token'>,
+  ): Promise<TResult> {
+    return appDevRequestDoc({
+      ...options,
+      token: await this.token(),
+      unauthorizedHandler: this.createUnauthorizedHandler(),
+    })
+  }
+
+  private async businessPlatformRequest<TResult, TVariables extends Variables>(
+    options: Omit<BusinessPlatformRequestOptions<TResult, TVariables>, 'unauthorizedHandler' | 'token'>,
+  ): Promise<TResult> {
+    return businessPlatformRequestDoc({
+      ...options,
+      token: await this.businessPlatformToken(),
+      unauthorizedHandler: this.createUnauthorizedHandler(),
+    })
+  }
+
+  private async businessPlatformOrganizationsRequest<TResult, TVariables extends Variables>(
+    options: Omit<BusinessPlatformOrganizationsRequestOptions<TResult, TVariables>, 'unauthorizedHandler' | 'token'>,
+  ): Promise<TResult> {
+    return businessPlatformOrganizationsRequestDoc({
+      ...options,
+      token: await this.businessPlatformToken(),
+      unauthorizedHandler: this.createUnauthorizedHandler(),
+    })
+  }
+
+  private async functionsRequest<TResult, TVariables extends Variables>(
+    options: Omit<FunctionsRequestOptions<TResult, TVariables>, 'unauthorizedHandler' | 'token'>,
+  ): Promise<TResult> {
+    return functionsRequestDoc<TResult, TVariables>({
+      ...options,
+      token: await this.token(),
+      unauthorizedHandler: this.createUnauthorizedHandler(),
+    })
+  }
+
+  private async webhooksRequest<TResult, TVariables extends Variables>(
+    options: Omit<WebhooksRequestOptions<TResult, TVariables>, 'unauthorizedHandler' | 'token'>,
+  ): Promise<TResult> {
+    return webhooksRequestDoc<TResult, TVariables>({
+      ...options,
+      token: await this.token(),
+      unauthorizedHandler: this.createUnauthorizedHandler(),
+    })
+  }
+
+  private createUnauthorizedHandler(): UnauthorizedHandler {
+    return createUnauthorizedHandler(this)
+  }
+}
+
+interface AppVersionSource {
+  source: {
+    name: string
+    modules: {
+      uid?: string
+      type: string
+      handle?: string
+      config: {[key: string]: unknown}
+    }[]
   }
 }
 
@@ -899,35 +1145,36 @@ export class AppManagementClient implements DeveloperPlatformClient {
 const MAGIC_URL = 'https://shopify.dev/apps/default-app-home'
 const MAGIC_REDIRECT_URL = 'https://shopify.dev/apps/default-app-home/api/auth'
 
-function createAppVars(name: string, isLaunchable = true, scopesArray?: string[]): CreateAppMutationVariables {
-  return {
-    appSource: {
-      appModules: [
+function createAppVars(
+  options: CreateAppOptions,
+  organizationId: string,
+  apiVersion: string,
+): CreateAppMutationVariables {
+  const {isLaunchable, scopesArray, name} = options
+  const source: AppVersionSource = {
+    source: {
+      name,
+      modules: [
         {
-          // Change the uid to AppHomeSpecIdentifier
-          uid: 'app_home',
-          specificationIdentifier: AppHomeSpecIdentifier,
+          type: AppHomeSpecIdentifier,
           config: {
             app_url: isLaunchable ? 'https://example.com' : MAGIC_URL,
-            embedded: isLaunchable,
+            // Ext-only apps should be embedded = false, however we are hardcoding this to
+            // match Partners behaviour for now
+            // https://github.com/Shopify/develop-app-inner-loop/issues/2789
+            embedded: true,
           },
         },
         {
-          // Change the uid to BrandingSpecIdentifier
-          uid: 'branding',
-          specificationIdentifier: BrandingSpecIdentifier,
+          type: BrandingSpecIdentifier,
           config: {name},
         },
         {
-          // Change the uid to WebhooksSpecIdentifier
-          uid: 'webhooks',
-          specificationIdentifier: WebhooksSpecIdentifier,
-          config: {api_version: '2024-01'},
+          type: WebhooksSpecIdentifier,
+          config: {api_version: apiVersion},
         },
         {
-          // Change the uid to AppAccessSpecIdentifier
-          uid: 'app_access',
-          specificationIdentifier: AppAccessSpecIdentifier,
+          type: AppAccessSpecIdentifier,
           config: {
             redirect_url_allowlist: isLaunchable ? ['https://example.com/api/auth'] : [MAGIC_REDIRECT_URL],
             ...(scopesArray && {scopes: scopesArray.map((scope) => scope.trim()).join(',')}),
@@ -935,7 +1182,11 @@ function createAppVars(name: string, isLaunchable = true, scopesArray?: string[]
         },
       ],
     },
-    name,
+  }
+
+  return {
+    initialVersion: {source: source.source as unknown as JsonMapType},
+    organizationId: gidFromOrganizationIdForShopify(organizationId),
   }
 }
 
@@ -943,8 +1194,21 @@ function createAppVars(name: string, isLaunchable = true, scopesArray?: string[]
 // just the integer portion of that ID. These functions convert between the two.
 
 // 1234 => gid://organization/Organization/1234 => base64
-export function encodedGidFromId(id: string): string {
-  const gid = `gid://organization/Organization/${id}`
+export function encodedGidFromOrganizationIdForBP(id: string): string {
+  const num = id.startsWith('gid://') ? numberFromGid(id) : Number(id)
+  const gid = `gid://organization/Organization/${num}`
+  return Buffer.from(gid).toString('base64')
+}
+
+// App Managament uses a different GID format than Business Platform for organizationId.
+function gidFromOrganizationIdForShopify(id: string): string {
+  const num = id.startsWith('gid://') ? numberFromGid(id) : Number(id)
+  return `gid://shopify/Organization/${num}`
+}
+
+// 1234 => gid://organization/ShopifyShop/1234 => base64
+export function encodedGidFromShopId(id: string): string {
+  const gid = `gid://organization/ShopifyShop/${id}`
   return Buffer.from(gid).toString('base64')
 }
 
@@ -956,14 +1220,18 @@ function idFromEncodedGid(gid: string): string {
 
 // gid://organization/Organization/1234 => 1234
 function numberFromGid(gid: string): number {
-  return Number(gid.match(/^gid.*\/(\d+)$/)![1])
+  if (gid.startsWith('gid://')) {
+    return Number(gid.match(/^gid.*\/(\d+)$/)![1])
+  }
+  return Number(gid)
 }
 
 async function appDeepLink({
   id,
   organizationId,
 }: Pick<MinimalAppIdentifiers, 'id' | 'organizationId'>): Promise<string> {
-  return `https://${await developerDashboardFqdn()}/dashboard/${organizationId}/apps/${numberFromGid(id)}`
+  const orgId = numberFromGid(organizationId).toString()
+  return `https://${await developerDashboardFqdn()}/dashboard/${orgId}/apps/${numberFromGid(id)}`
 }
 
 export async function versionDeepLink(organizationId: string, appId: string, versionId: string): Promise<string> {
@@ -995,15 +1263,19 @@ export function diffAppModules({currentModules, selectedVersionModules}: DiffApp
 export async function allowedTemplates(
   templates: GatedExtensionTemplate[],
   betaFlagsFetcher: (betaFlags: string[]) => Promise<{[key: string]: boolean}>,
+  version: string = CLI_KIT_VERSION,
 ): Promise<GatedExtensionTemplate[]> {
   const allBetaFlags = Array.from(new Set(templates.map((ext) => ext.organizationBetaFlags ?? []).flat()))
   const enabledBetaFlags = await betaFlagsFetcher(allBetaFlags)
   return templates.filter((ext) => {
     const hasAnyNeededBetas =
       !ext.organizationBetaFlags || ext.organizationBetaFlags.every((flag) => enabledBetaFlags[flag])
-    const satisfiesMinCliVersion =
-      !ext.minimumCliVersion || versionSatisfies(CLI_KIT_VERSION, `>=${ext.minimumCliVersion}`)
-    return hasAnyNeededBetas && satisfiesMinCliVersion
+    const satisfiesMinCliVersion = !ext.minimumCliVersion || versionSatisfies(version, `>=${ext.minimumCliVersion}`)
+    const satisfiesDeprecatedFromCliVersion =
+      !ext.deprecatedFromCliVersion || versionSatisfies(version, `<${ext.deprecatedFromCliVersion}`)
+    const satisfiesVersion = satisfiesMinCliVersion && satisfiesDeprecatedFromCliVersion
+    const satisfiesPreReleaseVersion = isPreReleaseVersion(version) && ext.deprecatedFromCliVersion === undefined
+    return hasAnyNeededBetas && (satisfiesVersion || satisfiesPreReleaseVersion)
   })
 }
 
@@ -1011,7 +1283,10 @@ function experience(identifier: string): 'configuration' | 'extension' {
   return CONFIG_EXTENSION_IDS.includes(identifier) ? 'configuration' : 'extension'
 }
 
-function mapBusinessPlatformStoresToOrganizationStores(storesArray: ShopNode[]): OrganizationStore[] {
+function mapBusinessPlatformStoresToOrganizationStores(
+  storesArray: ShopNode[],
+  provisionable: boolean,
+): OrganizationStore[] {
   return storesArray.map((store: ShopNode) => {
     const {externalId, primaryDomain, name} = store
     return {
@@ -1021,22 +1296,62 @@ function mapBusinessPlatformStoresToOrganizationStores(storesArray: ShopNode[]):
       shopName: name,
       transferDisabled: true,
       convertableToPartnerTest: true,
+      provisionable,
     } as OrganizationStore
   })
 }
 
 function appModuleVersion(mod: ReleasedAppModuleFragment): Required<AppModuleVersion> {
   return {
-    registrationId: mod.userIdentifier,
-    registrationUuid: mod.userIdentifier,
+    registrationId: mod.userIdentifier === mod.uuid ? '' : mod.userIdentifier,
+    registrationUuid: mod.uuid,
     registrationTitle: mod.handle,
     type: mod.specification.externalIdentifier,
     config: mod.config,
+    target: mod.target ?? '',
     specification: {
       ...mod.specification,
       identifier: mod.specification.identifier,
-      options: {managementExperience: 'cli'},
+      options: {managementExperience: mod.specification.managementExperience as 'cli' | 'custom' | 'dashboard'},
       experience: experience(mod.specification.identifier),
     },
   }
+}
+
+const fetchAppLogs = async ({
+  organizationId,
+  jwtToken,
+  cursor,
+  filters,
+}: FetchAppLogsDevDashboardOptions): Promise<Response> => {
+  const url = await appManagementAppLogsUrl(organizationId, cursor, filters)
+  const headers = appManagementHeaders(jwtToken)
+
+  return shopifyFetch(url, {
+    method: 'GET',
+    headers,
+  })
+}
+
+interface FetchAppLogsDevDashboardOptions {
+  organizationId: string
+  jwtToken: string
+  cursor?: string
+  filters?: {
+    status?: string
+    source?: string
+  }
+}
+
+function toUserError(err: CreateAppVersionMutation['appVersionCreate']['userErrors'][number]): UserError {
+  const details = []
+  const extensionId = (err.on[0] as {user_identifier: string})?.user_identifier
+  if (extensionId) {
+    details.push({extension_id: extensionId})
+  }
+  return {...err, details}
+}
+
+function isStoreProvisionable(permissions: string[]) {
+  return permissions.includes('ondemand_access_to_stores')
 }

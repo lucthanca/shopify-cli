@@ -6,7 +6,7 @@ on:
       - created
 
 env:
-  PNPM_VERSION: '8.15.7'
+  PNPM_VERSION: '10.11.1'
 
 jobs:
   snapit:
@@ -26,13 +26,25 @@ jobs:
       - name: Force snapshot changeset
         run: "mv .changeset/force-snapshot-build.md.ignore .changeset/force-snapshot-build.md"
       - name: Create snapshot version
-        uses: Shopify/snapit@0c0d2dd62c9b0c94b7d03e1f54e72f18548e7752 # pin to a specific commit
+        uses: Shopify/snapit@8ff75631e13281a35f85b373bcadfa2fa12bb21e # pin@v0.0.14
         with:
           global_install: 'true'
           github_comment_included_packages: '@shopify/cli'
-          custom_message_suffix: "\n> After installing, validate the version by running just `shopify` in your terminal\n> If the versions don't match, you might have multiple global instances installed.\n> Use `which shopify` to find out which one you are running and uninstall it."
-          build_script: "pnpm nx run-many --target=bundle --all --skip-nx-cache --output-style=stream"
+          custom_message_suffix: "
+            > [!TIP]
+
+            > If you get an `ETARGET` error, install it with NPM and the flag `--@shopify:registry=https://registry.npmjs.org`
+
+
+            > [!CAUTION]
+
+            > After installing, validate the version by running just `shopify` in your terminal.
+
+            > If the versions don't match, you might have multiple global instances installed.
+
+            > Use `which shopify` to find out which one you are running and uninstall it."
+          build_script: "pnpm nx run-many --target=bundle --all --skip-nx-cache --output-style=stream && pnpm refresh-manifests"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-
+          SHOPIFY_CLI_BUILD_REPO: ${{ github.repository }}

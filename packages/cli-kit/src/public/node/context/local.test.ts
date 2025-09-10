@@ -4,10 +4,11 @@ import {
   isDevelopment,
   isShopify,
   isUnitTest,
-  isAppManagementEnabled,
   analyticsDisabled,
   cloudEnvironment,
   macAddress,
+  getThemeKitAccessDomain,
+  opentelemetryDomain,
 } from './local.js'
 import {fileExists} from '../fs.js'
 import {exec} from '../system.js'
@@ -15,6 +16,7 @@ import {expect, describe, vi, test} from 'vitest'
 
 vi.mock('../fs.js')
 vi.mock('../system.js')
+vi.mock('../environment.js')
 
 describe('isUnitTest', () => {
   test('returns true when SHOPIFY_UNIT_TEST is truthy', () => {
@@ -97,30 +99,6 @@ describe('hasGit', () => {
 
     // Then
     expect(got).toBeTruthy()
-  })
-})
-
-describe('isAppManagementEnabled', () => {
-  test('returns true when USE_APP_MANAGEMENT_API is truthy', () => {
-    // Given
-    const env = {USE_APP_MANAGEMENT_API: '1'}
-
-    // When
-    const got = isAppManagementEnabled(env)
-
-    // Then
-    expect(got).toBe(true)
-  })
-
-  test('returns false when USE_APP_MANAGEMENT_API is falsy', () => {
-    // Given
-    const env = {USE_APP_MANAGEMENT_API: '0'}
-
-    // When
-    const got = isAppManagementEnabled(env)
-
-    // Then
-    expect(got).toBe(false)
   })
 })
 
@@ -302,5 +280,53 @@ describe('ciPlatform', () => {
       name: 'azure',
       metadata: {},
     })
+  })
+})
+
+describe('getThemeKitAccessDomain', () => {
+  test('returns default domain when env var not set', () => {
+    // Given
+    const env = {}
+
+    // When
+    const got = getThemeKitAccessDomain(env)
+
+    // Then
+    expect(got).toBe('theme-kit-access.shopifyapps.com')
+  })
+
+  test('returns custom domain when env var set', () => {
+    // Given
+    const env = {SHOPIFY_CLI_THEME_KIT_ACCESS_DOMAIN: 'theme-kit-staging.shopifyapps.com'}
+
+    // When
+    const got = getThemeKitAccessDomain(env)
+
+    // Then
+    expect(got).toBe('theme-kit-staging.shopifyapps.com')
+  })
+})
+
+describe('opentelemetryDomain', () => {
+  test('returns default domain when env var not set', () => {
+    // Given
+    const env = {}
+
+    // When
+    const got = opentelemetryDomain(env)
+
+    // Then
+    expect(got).toBe('https://otlp-http-production-cli.shopifysvc.com')
+  })
+
+  test('returns custom domain when env var set', () => {
+    // Given
+    const env = {SHOPIFY_CLI_OTEL_EXPORTER_OTLP_ENDPOINT: 'custom-otel-domain.com'}
+
+    // When
+    const got = opentelemetryDomain(env)
+
+    // Then
+    expect(got).toBe('custom-otel-domain.com')
   })
 })

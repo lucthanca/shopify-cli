@@ -82,3 +82,43 @@ export function getIdentityTokenInformation(): {accessToken: string; refreshToke
 export function jsonOutputEnabled(environment = getEnvironmentVariables()): boolean {
   return sniffForJson() || isTruthy(environment[environmentVariables.json])
 }
+
+/**
+ * If true, the CLI should not use the Partners API.
+ *
+ * @returns True if the SHOPIFY_CLI_NEVER_USE_PARTNERS_API environment variable is set.
+ */
+export function blockPartnersAccess(): boolean {
+  return isTruthy(getEnvironmentVariables()[environmentVariables.neverUsePartnersApi])
+}
+
+/**
+ * If true, the CLI should not use the network level retry.
+ *
+ * If there is an error when calling a network API that looks like a DNS or connectivity issue, the CLI will by default
+ * automatically retry the request.
+ *
+ * @param environment - Process environment variables.
+ * @returns True if the SHOPIFY_CLI_SKIP_NETWORK_LEVEL_RETRY environment variable is set.
+ */
+export function skipNetworkLevelRetry(environment = getEnvironmentVariables()): boolean {
+  return isTruthy(environment[environmentVariables.skipNetworkLevelRetry])
+}
+
+/**
+ * Returns the default maximum request time for network calls in milliseconds.
+ *
+ * After this long, API requests may be cancelled by an AbortSignal. The limit can be overridden by setting the
+ * SHOPIFY_CLI_MAX_REQUEST_TIME_FOR_NETWORK_CALLS environment variable.
+ *
+ * @param environment - Process environment variables.
+ * @returns The maximum request time in milliseconds.
+ */
+export function maxRequestTimeForNetworkCallsMs(environment = getEnvironmentVariables()): number {
+  const maxRequestTime = environment[environmentVariables.maxRequestTimeForNetworkCalls]
+  if (maxRequestTime && !isNaN(Number(maxRequestTime))) {
+    return Number(maxRequestTime)
+  }
+  // 30 seconds is the default
+  return 30 * 1000
+}
