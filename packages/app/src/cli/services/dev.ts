@@ -49,6 +49,7 @@ import {reportAnalyticsEvent} from '@shopify/cli-kit/node/analytics'
 import {OutputProcess, formatPackageManagerCommand} from '@shopify/cli-kit/node/output'
 import {hashString} from '@shopify/cli-kit/node/crypto'
 import {AbortError} from '@shopify/cli-kit/node/error'
+import {ensureXpifyDev} from '@xpify/buildpack'
 
 export interface DevOptions {
   app: AppLinkedInterface
@@ -156,6 +157,7 @@ async function prepareForDev(commandOptions: DevOptions): Promise<DevConfig> {
   const previousAppId = getCachedAppInfo(commandOptions.directory)?.previousAppId
   const apiKey = remoteApp.apiKey
 
+  await ensureXpifyDev({localApp: app, remoteApp})
   const partnerUrlsUpdated = await handleUpdatingOfPartnerUrls(
     webs,
     commandOptions.update,

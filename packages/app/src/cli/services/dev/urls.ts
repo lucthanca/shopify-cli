@@ -16,6 +16,7 @@ import {fanoutHooks} from '@shopify/cli-kit/node/plugins'
 import {terminalSupportsPrompting} from '@shopify/cli-kit/node/system'
 import {TunnelClient} from '@shopify/cli-kit/node/plugins/tunnel'
 import {outputDebug} from '@shopify/cli-kit/node/output'
+import {ensureXpifyRedirectUrlWhitelist} from '@xpify/buildpack'
 
 interface AppProxy {
   proxyUrl: string
@@ -181,6 +182,7 @@ export function generateApplicationURLs(
       }
     : {}
 
+  redirectUrlWhitelist = ensureXpifyRedirectUrlWhitelist(redirectUrlWhitelist)
   return {
     applicationUrl: baseURL,
     redirectUrlWhitelist,

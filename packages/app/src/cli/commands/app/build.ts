@@ -6,6 +6,7 @@ import AppUnlinkedCommand, {AppUnlinkedCommandOutput} from '../../utilities/app-
 import {Flags} from '@oclif/core'
 import {globalFlags} from '@shopify/cli-kit/node/cli'
 import {addPublicMetadata} from '@shopify/cli-kit/node/metadata'
+import {ensureXpifyDev} from '@xpify/buildpack'
 
 export default class Build extends AppUnlinkedCommand {
   static summary = 'Build the app, including extensions.'

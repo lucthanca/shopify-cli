@@ -1,5 +1,5 @@
 import * as path from 'pathe'
-import {defineConfig} from 'vitest/config'
+import {defineConfig, splitVendorChunkPlugin} from 'vitest/config'
 import type {AliasOptions} from 'vite'
 
 const TIMEOUTS = {
@@ -30,6 +30,7 @@ export default function config(packagePath: string, {poolStrategy}: ConfigOption
   return defineConfig({
     resolve: {
       alias: aliases(packagePath) as AliasOptions,
+      plugins: [splitVendorChunkPlugin()],
     },
     test: {
       testTimeout,

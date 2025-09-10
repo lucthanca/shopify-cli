@@ -28,6 +28,7 @@
     "release": "./bin/release",
     "post-release": "./bin/post-release",
     "shopify:run": "node packages/cli/bin/dev.js",
+    "shopify:build": "nx build cli",
     "shopify": "nx build cli && node packages/cli/bin/dev.js",
     "test:features": "pnpm nx run features:test",
     "test:regenerate-snapshots": "nx build cli && packages/features/snapshots/regenerate.sh",
